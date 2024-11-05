@@ -58,7 +58,7 @@ pub enum Literal {
     String(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Copy)]
 pub enum BinaryOp {
     // Arithmetic
     Add,
@@ -81,7 +81,7 @@ pub enum BinaryOp {
     Shr,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Copy)]
 pub enum UnaryOp {
     Not,
     Neg,
