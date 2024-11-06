@@ -43,10 +43,16 @@ fn test_function_declaration() {
         return_type: Some(AstType::I32),
     };
 
-    let expected_ir = "declare i32 @add(i32 %0, i32 %1)";
     codegen.compile_stmt(&Stmt::FuncDecl(func_decl)).unwrap();
-
-    assert_eq!(codegen.module.to_string(), expected_ir);
+    
+    let expected_ir = "declare i32 @add(i32 %0, i32 %1)";
+    let actual_ir = codegen.module.print_to_string().to_string();
+    
+    if actual_ir != expected_ir {
+        println!("Expected IR:\n{}", expected_ir);
+        println!("Generated IR:\n{}", actual_ir);
+    }
+    assert_eq!(actual_ir, expected_ir);
 }
 
 #[test]
@@ -78,7 +84,8 @@ fn test_function_definition() {
         })],
     };
 
-    assert!(codegen.compile_stmt(&Stmt::FuncDef(func_def)).is_ok());
+    let result = codegen.compile_stmt(&Stmt::FuncDef(func_def));
+    assert_and_dump(result, &codegen);
 }
 
 #[test]
@@ -503,8 +510,8 @@ fn test_function_with_params() {
         ],
     };
 
-    // Compile the function
-    codegen.compile_stmt(&Stmt::FuncDef(add_func)).unwrap();
+    let result = codegen.compile_stmt(&Stmt::FuncDef(add_func));
+    assert_and_dump(result, &codegen);
 
     // Get and execute the function
     type AddFunc = unsafe extern "C" fn(i64, i64) -> i64;
@@ -551,8 +558,8 @@ fn test_if_statement_execution() {
         ],
     };
 
-    // Compile the function
-    codegen.compile_stmt(&Stmt::FuncDef(test_func)).unwrap();
+    let result = codegen.compile_stmt(&Stmt::FuncDef(test_func));
+    assert_and_dump(result, &codegen);
 
     // Get and execute the function
     type IfTestFunc = unsafe extern "C" fn(i64) -> i64;
@@ -658,4 +665,70 @@ fn test_loop_execution() {
         assert_eq!(func.call(3), 6);     // 1 + 2 + 3
         assert_eq!(func.call(5), 15);    // 1 + 2 + 3 + 4 + 5
     }
+}
+
+#[test]
+fn test_string_literal() {
+    let context = Context::create();
+    let codegen = setup_codegen(&context);
+
+    let string_expr = Expr::Literal(Literal::String("Hello, World!".to_string()));
+    
+    // Test that we can compile a string literal
+    assert!(codegen.compile_expr(&string_expr).is_ok());
+}
+
+#[test]
+fn test_string_variable() {
+    let context = Context::create();
+    let codegen = setup_codegen(&context);
+
+    let var_decl = VarDecl {
+        name: "message".to_string(),
+        type_: AstType::String,
+        init: Some(Box::new(Expr::Literal(Literal::String("Hello".to_string())))),
+    };
+
+    let result = codegen.compile_stmt(&Stmt::VarDecl(var_decl));
+    assert_and_dump(result, &codegen);
+}
+
+#[test]
+fn test_struct_definition_and_instantiation() {
+    let context = Context::create();
+    let codegen = setup_codegen(&context);
+
+    // First declare the struct
+    let struct_decl = StructDecl {
+        name: "Point".to_string(),
+        fields: vec![
+            ("x".to_string(), AstType::I64),
+            ("y".to_string(), AstType::I64),
+        ],
+    };
+    let result1 = codegen.compile_stmt(&Stmt::StructDecl(struct_decl));
+    assert_and_dump(result1, &codegen);
+
+    // Then create an instance
+    let struct_def = StructDef {
+        name: "Point".to_string(),
+        fields: vec![
+            ("x".to_string(), Expr::Literal(Literal::Int(10))),
+            ("y".to_string(), Expr::Literal(Literal::Int(20))),
+        ],
+    };
+    let result2 = codegen.compile_stmt(&Stmt::StructDef(struct_def));
+    assert_and_dump(result2, &codegen);
+}
+
+// Helper function for running tests with IR dump on error
+fn assert_and_dump<E>(result: Result<(), E>, codegen: &CodeGen) 
+where 
+    E: std::fmt::Debug
+{
+    if let Err(e) = &result {
+        println!("Error occurred: {:?}", e);
+        println!("Generated IR:\n{}", codegen.dump_module());
+    }
+    assert!(result.is_ok());
 }

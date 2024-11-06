@@ -26,6 +26,7 @@ pub struct CodeGen<'ctx> {
     pub execution_engine: ExecutionEngine<'ctx>,
     loop_stack: RefCell<Vec<LoopContext<'ctx>>>,
     variables: RefCell<HashMap<String, inkwell::values::PointerValue<'ctx>>>,
+    struct_types: RefCell<HashMap<String, inkwell::types::StructType<'ctx>>>,
 }
 
 impl<'ctx> CodeGen<'ctx> {
@@ -43,6 +44,7 @@ impl<'ctx> CodeGen<'ctx> {
             execution_engine,
             loop_stack: RefCell::new(Vec::new()),
             variables: RefCell::new(HashMap::new()),
+            struct_types: RefCell::new(HashMap::new()),
         }
     }
 
@@ -111,20 +113,23 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     fn compile_func_decl(&self, func_decl: &FuncDecl) -> Result<()> {
-        // Convert parameter types to LLVM types in one step
-        let param_types: Vec<_> = func_decl.params
+        // Convert parameter types to LLVM types
+        let param_types: Result<Vec<_>> = func_decl.params
             .iter()
             .map(|(_, ty)| self.into_llvm_type(ty))
-            .collect::<Result<Vec<_>>>()?
-            .iter()
-            .map(|t| t.as_basic_type_enum().into())
+            .collect();
+        let param_types = param_types?;
+
+        // Convert BasicTypeEnum to BasicMetadataTypeEnum
+        let param_types: Vec<_> = param_types.iter()
+            .map(|ty| (*ty).into())
             .collect();
 
-        // Create function type based on return type
+        // Create function type
         let fn_type = match &func_decl.return_type {
-            Some(ast_type) => {
-                let return_type = self.into_llvm_type(ast_type)?;
-                return_type.fn_type(&param_types, false)
+            Some(ret_type) => {
+                let ret_type = self.into_llvm_type(ret_type)?;
+                ret_type.fn_type(&param_types, false)
             },
             None => self.context.void_type().fn_type(&param_types, false),
         };
@@ -138,18 +143,18 @@ impl<'ctx> CodeGen<'ctx> {
         // First compile the declaration
         self.compile_func_decl(&func_def.decl)?;
 
-        // Get the function from the module
+        // Get the function
         let function = self.module.get_function(&func_def.decl.name)
             .ok_or(CodegenError::FunctionNotFound)?;
 
-        // Create entry basic block
-        let basic_block = self.context.append_basic_block(function, "entry");
-        self.builder.position_at_end(basic_block);
+        // Create entry block
+        let entry_block = self.context.append_basic_block(function, "entry");
+        self.builder.position_at_end(entry_block);
 
-        // Clear any existing variables
+        // Clear variables map for new function scope
         self.variables.borrow_mut().clear();
 
-        // Create allocas for parameters and store the arguments
+        // Create allocas for parameters
         for (i, (param_name, param_type)) in func_def.decl.params.iter().enumerate() {
             let param = function.get_nth_param(i as u32)
                 .ok_or(CodegenError::UnsupportedType)?;
@@ -170,13 +175,13 @@ impl<'ctx> CodeGen<'ctx> {
             self.compile_stmt(stmt)?;
         }
 
-        // Add a return void if no return statement was added
-        if function.get_type().get_return_type().is_none() 
-            && self.builder.get_insert_block().unwrap().get_terminator().is_none() {
-            self.builder.build_return(None)?;
+        // Verify the function
+        if function.verify(true) {
+            Ok(())
+        } else {
+            function.print_to_stderr();
+            Err(CodegenError::UnsupportedExpression.into())
         }
-
-        Ok(())
     }
 
     fn compile_var_decl(&self, var_decl: &VarDecl) -> Result<()> {
@@ -239,7 +244,12 @@ impl<'ctx> CodeGen<'ctx> {
             Literal::Float(f) => Ok(self.context.f64_type().const_float(*f).into()),
             Literal::Bool(b) => Ok(self.context.bool_type().const_int(*b as u64, false).into()),
             Literal::Char(c) => Ok(self.context.i8_type().const_int(*c as u64, false).into()),
-            Literal::String(_) => Err(CodegenError::UnsupportedType.into()),
+            Literal::String(s) => {
+                // Create a constant string and get a pointer to it
+                let string_ptr = self.builder.build_global_string_ptr(s, "str")
+                    .map_err(|_| CodegenError::UnsupportedType)?;
+                Ok(string_ptr.as_pointer_value().into())
+            }
         }
     }
 
@@ -450,16 +460,41 @@ impl<'ctx> CodeGen<'ctx> {
             .iter()
             .map(|(_, ty)| self.into_llvm_type(ty))
             .collect();
-        let field_types = field_types?;
         
-        self.context.struct_type(&field_types, false);
+        let struct_type = self.context.opaque_struct_type(&struct_decl.name);
+        struct_type.set_body(&field_types?, false);
+        
+        self.struct_types.borrow_mut().insert(struct_decl.name.clone(), struct_type);
         Ok(())
     }
 
-    fn compile_struct_def(&self, _struct_def: &StructDef) -> Result<()> {
-        // This would create an instance of a struct
-        // You'll need to maintain a mapping of struct types
-        Err(CodegenError::Unimplemented.into())
+    fn compile_struct_def(&self, struct_def: &StructDef) -> Result<()> {
+        let struct_type = self.struct_types.borrow()
+            .get(&struct_def.name)
+            .ok_or(CodegenError::UnsupportedType)?
+            .clone();
+
+        // Allocate space for the struct
+        let struct_ptr = self.builder.build_alloca(struct_type, &struct_def.name)
+            .map_err(|_| CodegenError::UnsupportedType)?;
+
+        // Compile and store each field
+        for (i, (field_name, field_expr)) in struct_def.fields.iter().enumerate() {
+            let field_value = self.compile_expr(field_expr)?;
+            let field_ptr = unsafe {
+                self.builder.build_struct_gep(
+                    struct_type,  // Add the struct type as first argument
+                    struct_ptr,
+                    i as u32,
+                    field_name
+                ).map_err(|_| CodegenError::UnsupportedType)?
+            };
+            self.builder.build_store(field_ptr, field_value)
+                .map_err(|_| CodegenError::UnsupportedType)?;
+        }
+
+        self.variables.borrow_mut().insert(struct_def.name.clone(), struct_ptr);
+        Ok(())
     }
 
     fn compile_enum_decl(&self, enum_decl: &EnumDecl) -> Result<()> {
@@ -501,7 +536,48 @@ impl<'ctx> CodeGen<'ctx> {
                 Ok(self.builder.build_int_add(l, r, "addtmp")
                     .map_err(|_| CodegenError::UnsupportedExpression)?.into())
             },
-            // Add other binary operations as needed
+            (BinaryOp::Sub,
+             inkwell::values::BasicValueEnum::IntValue(l),
+             inkwell::values::BasicValueEnum::IntValue(r)) => {
+                Ok(self.builder.build_int_sub(l, r, "subtmp")
+                    .map_err(|_| CodegenError::UnsupportedExpression)?.into())
+            },
+            (BinaryOp::Mul,
+             inkwell::values::BasicValueEnum::IntValue(l),
+             inkwell::values::BasicValueEnum::IntValue(r)) => {
+                Ok(self.builder.build_int_mul(l, r, "multmp")
+                    .map_err(|_| CodegenError::UnsupportedExpression)?.into())
+            },
+            (BinaryOp::Gt,
+             inkwell::values::BasicValueEnum::IntValue(l),
+             inkwell::values::BasicValueEnum::IntValue(r)) => {
+                Ok(self.builder.build_int_compare(
+                    inkwell::IntPredicate::SGT,
+                    l,
+                    r,
+                    "gttmp"
+                ).map_err(|_| CodegenError::UnsupportedExpression)?.into())
+            },
+            (BinaryOp::Lt,
+             inkwell::values::BasicValueEnum::IntValue(l),
+             inkwell::values::BasicValueEnum::IntValue(r)) => {
+                Ok(self.builder.build_int_compare(
+                    inkwell::IntPredicate::SLT,
+                    l,
+                    r,
+                    "lttmp"
+                ).map_err(|_| CodegenError::UnsupportedExpression)?.into())
+            },
+            (BinaryOp::Le,
+             inkwell::values::BasicValueEnum::IntValue(l),
+             inkwell::values::BasicValueEnum::IntValue(r)) => {
+                Ok(self.builder.build_int_compare(
+                    inkwell::IntPredicate::SLE,
+                    l,
+                    r,
+                    "letmp"
+                ).map_err(|_| CodegenError::UnsupportedExpression)?.into())
+            },
             _ => Err(CodegenError::UnsupportedExpression.into()),
         }
     }
@@ -538,6 +614,14 @@ impl<'ctx> CodeGen<'ctx> {
                 .get_function::<T>(name)
                 .map_err(|_| CodegenError::FunctionNotFound.into())
         }
+    }
+
+    pub fn dump_module(&self) -> String {
+        self.module.print_to_string().to_string()
+    }
+
+    pub fn get_execution_engine(&self) -> &ExecutionEngine<'ctx> {
+        &self.execution_engine
     }
 }
 
