@@ -705,6 +705,83 @@ fn test_struct_definition_and_instantiation() {
     assert_and_dump(result2, &codegen);
 }
 
+#[test]
+fn test_loop_with_break() {
+    let context = Context::create();
+    let codegen = setup_codegen(&context);
+
+    // Create a test function that counts to 10
+    let test_func = FuncDef {
+        decl: FuncDecl {
+            name: "count_to_ten".to_string(),
+            params: vec![],
+            return_type: Some(AstType::I64),
+        },
+        body: vec![
+            // Initialize i = 0
+            Stmt::VarDecl(VarDecl {
+                name: "i".to_string(),
+                type_: AstType::I64,
+                init: Some(Box::new(Expr::Literal(Literal::Int(0)))),
+            }),
+            // while(true)
+            Stmt::Loop(LoopStmt {
+                condition: Box::new(Expr::Literal(Literal::Bool(true))),
+                body: vec![
+                    // if (i > 10) break;
+                    Stmt::If(IfStmt {
+                        condition: Box::new(Expr::Binary(Box::new(Binary {
+                            op: BinaryOp::Gt,
+                            left: Box::new(Expr::Variable(Variable_ {
+                                name: "i".to_string(),
+                                type_: AstType::I64,
+                            })),
+                            right: Box::new(Expr::Literal(Literal::Int(10))),
+                        }))),
+                        then_branch: vec![Stmt::Break],
+                        else_branch: None,
+                    }),
+                    // i = i + 1
+                    Stmt::Assign(Assign {
+                        target: Variable_ {
+                            name: "i".to_string(),
+                            type_: AstType::I64,
+                        },
+                        value: Box::new(Expr::Binary(Box::new(Binary {
+                            op: BinaryOp::Add,
+                            left: Box::new(Expr::Variable(Variable_ {
+                                name: "i".to_string(),
+                                type_: AstType::I64,
+                            })),
+                            right: Box::new(Expr::Literal(Literal::Int(1))),
+                        }))),
+                    }),
+                ],
+            }),
+            // return i
+            Stmt::Return(Return {
+                value: Some(Box::new(Expr::Variable(Variable_ {
+                    name: "i".to_string(),
+                    type_: AstType::I64,
+                }))),
+            }),
+        ],
+    };
+
+    // Compile the function
+    let result = codegen.compile_stmt(&Stmt::FuncDef(test_func));
+    assert_and_dump(result, &codegen);
+
+    // Get and execute the function
+    type CountFunc = unsafe extern "C" fn() -> i64;
+    let func: JitFunction<CountFunc> = codegen.get_function("count_to_ten").unwrap();
+    
+    // Run the function and verify the result
+    unsafe {
+        assert_eq!(func.call(), 11); // i increments to 11 before the break
+    }
+}
+
 // Helper function for running tests with IR dump on error
 fn assert_and_dump<E>(result: Result<(), E>, codegen: &CodeGen) 
 where 
@@ -715,4 +792,307 @@ where
         println!("Generated IR:\n{}", codegen.dump_module());
     }
     assert!(result.is_ok());
+}
+
+#[test]
+fn test_complex_loop_execution() {
+    let context = Context::create();
+    let codegen = setup_codegen(&context);
+
+    // Create a simpler version first to debug:
+    // int main() {
+    //     int sum = 0;
+    //     int i = 0;
+    //     while(true) {
+    //         i = i + 1;
+    //         if (i > 5) {
+    //             sum = sum + i;
+    //             if (sum > 20) break;
+    //         }
+    //     }
+    //     return sum;
+    // }
+    let test_func = FuncDef {
+        decl: FuncDecl {
+            name: "complex_loop".to_string(),
+            params: vec![],
+            return_type: Some(AstType::I64),
+        },
+        body: vec![
+            // Initialize sum = 0
+            Stmt::VarDecl(VarDecl {
+                name: "sum".to_string(),
+                type_: AstType::I64,
+                init: Some(Box::new(Expr::Literal(Literal::Int(0)))),
+            }),
+            // Initialize i = 0
+            Stmt::VarDecl(VarDecl {
+                name: "i".to_string(),
+                type_: AstType::I64,
+                init: Some(Box::new(Expr::Literal(Literal::Int(0)))),
+            }),
+            // while(true)
+            Stmt::Loop(LoopStmt {
+                condition: Box::new(Expr::Literal(Literal::Bool(true))),
+                body: vec![
+                    // i = i + 1
+                    Stmt::Assign(Assign {
+                        target: Variable_ {
+                            name: "i".to_string(),
+                            type_: AstType::I64,
+                        },
+                        value: Box::new(Expr::Binary(Box::new(Binary {
+                            op: BinaryOp::Add,
+                            left: Box::new(Expr::Variable(Variable_ {
+                                name: "i".to_string(),
+                                type_: AstType::I64,
+                            })),
+                            right: Box::new(Expr::Literal(Literal::Int(1))),
+                        }))),
+                    }),
+                    // if (i > 5)
+                    Stmt::If(IfStmt {
+                        condition: Box::new(Expr::Binary(Box::new(Binary {
+                            op: BinaryOp::Gt,
+                            left: Box::new(Expr::Variable(Variable_ {
+                                name: "i".to_string(),
+                                type_: AstType::I64,
+                            })),
+                            right: Box::new(Expr::Literal(Literal::Int(5))),
+                        }))),
+                        then_branch: vec![
+                            // sum = sum + i
+                            Stmt::Assign(Assign {
+                                target: Variable_ {
+                                    name: "sum".to_string(),
+                                    type_: AstType::I64,
+                                },
+                                value: Box::new(Expr::Binary(Box::new(Binary {
+                                    op: BinaryOp::Add,
+                                    left: Box::new(Expr::Variable(Variable_ {
+                                        name: "sum".to_string(),
+                                        type_: AstType::I64,
+                                    })),
+                                    right: Box::new(Expr::Variable(Variable_ {
+                                        name: "i".to_string(),
+                                        type_: AstType::I64,
+                                    })),
+                                }))),
+                            }),
+                            // if (sum > 20) break
+                            Stmt::If(IfStmt {
+                                condition: Box::new(Expr::Binary(Box::new(Binary {
+                                    op: BinaryOp::Gt,
+                                    left: Box::new(Expr::Variable(Variable_ {
+                                        name: "sum".to_string(),
+                                        type_: AstType::I64,
+                                    })),
+                                    right: Box::new(Expr::Literal(Literal::Int(20))),
+                                }))),
+                                then_branch: vec![Stmt::Break],
+                                else_branch: None,
+                            }),
+                        ],
+                        else_branch: None,
+                    }),
+                ],
+            }),
+            // return sum
+            Stmt::Return(Return {
+                value: Some(Box::new(Expr::Variable(Variable_ {
+                    name: "sum".to_string(),
+                    type_: AstType::I64,
+                }))),
+            }),
+        ],
+    };
+
+    let result = codegen.compile_stmt(&Stmt::FuncDef(test_func));
+    assert_and_dump(result, &codegen);
+
+    // Get and execute the function
+    type LoopFunc = unsafe extern "C" fn() -> i64;
+    let func: JitFunction<LoopFunc> = codegen.get_function("complex_loop").unwrap();
+    
+    // Run the function and verify the result
+    // The loop should add 6 + 7 + 8 = 21, then break
+    unsafe {
+        assert_eq!(func.call(), 21);
+    }
+}
+
+#[test]
+fn test_nested_if_execution() {
+    let context = Context::create();
+    let codegen = setup_codegen(&context);
+
+    // Create a function that implements:
+    // int test(int x, int y) {
+    //     if (x > 5) {
+    //         if (y > 10) {
+    //             return 3;
+    //         }
+    //         return 2;
+    //     }
+    //     return 1;
+    // }
+    let test_func = FuncDef {
+        decl: FuncDecl {
+            name: "nested_if".to_string(),
+            params: vec![
+                ("x".to_string(), AstType::I64),
+                ("y".to_string(), AstType::I64),
+            ],
+            return_type: Some(AstType::I64),
+        },
+        body: vec![
+            Stmt::If(IfStmt {
+                condition: Box::new(Expr::Binary(Box::new(Binary {
+                    op: BinaryOp::Gt,
+                    left: Box::new(Expr::Variable(Variable_ {
+                        name: "x".to_string(),
+                        type_: AstType::I64,
+                    })),
+                    right: Box::new(Expr::Literal(Literal::Int(5))),
+                }))),
+                then_branch: vec![
+                    Stmt::If(IfStmt {
+                        condition: Box::new(Expr::Binary(Box::new(Binary {
+                            op: BinaryOp::Gt,
+                            left: Box::new(Expr::Variable(Variable_ {
+                                name: "y".to_string(),
+                                type_: AstType::I64,
+                            })),
+                            right: Box::new(Expr::Literal(Literal::Int(10))),
+                        }))),
+                        then_branch: vec![
+                            Stmt::Return(Return {
+                                value: Some(Box::new(Expr::Literal(Literal::Int(3)))),
+                            }),
+                        ],
+                        else_branch: None,
+                    }),
+                    Stmt::Return(Return {
+                        value: Some(Box::new(Expr::Literal(Literal::Int(2)))),
+                    }),
+                ],
+                else_branch: Some(vec![
+                    Stmt::Return(Return {
+                        value: Some(Box::new(Expr::Literal(Literal::Int(1)))),
+                    }),
+                ]),
+            }),
+        ],
+    };
+
+    let result = codegen.compile_stmt(&Stmt::FuncDef(test_func));
+    assert_and_dump(result, &codegen);
+
+    type TestFunc = unsafe extern "C" fn(i64, i64) -> i64;
+    let func: JitFunction<TestFunc> = codegen.get_function("nested_if").unwrap();
+    
+    unsafe {
+        assert_eq!(func.call(3, 15), 1);  // x <= 5
+        assert_eq!(func.call(7, 5), 2);   // x > 5, y <= 10
+        assert_eq!(func.call(7, 15), 3);  // x > 5, y > 10
+    }
+}
+
+#[test]
+fn test_arithmetic_execution() {
+    let context = Context::create();
+    let codegen = setup_codegen(&context);
+
+    // Create a function that implements:
+    // int calc(int x, int y) {
+    //     int a = x * 2;
+    //     int b = y + 5;
+    //     return (a + b) * (a - b);
+    // }
+    let test_func = FuncDef {
+        decl: FuncDecl {
+            name: "calc".to_string(),
+            params: vec![
+                ("x".to_string(), AstType::I64),
+                ("y".to_string(), AstType::I64),
+            ],
+            return_type: Some(AstType::I64),
+        },
+        body: vec![
+            // a = x * 2
+            Stmt::VarDecl(VarDecl {
+                name: "a".to_string(),
+                type_: AstType::I64,
+                init: Some(Box::new(Expr::Binary(Box::new(Binary {
+                    op: BinaryOp::Mul,
+                    left: Box::new(Expr::Variable(Variable_ {
+                        name: "x".to_string(),
+                        type_: AstType::I64,
+                    })),
+                    right: Box::new(Expr::Literal(Literal::Int(2))),
+                })))),
+            }),
+            // b = y + 5
+            Stmt::VarDecl(VarDecl {
+                name: "b".to_string(),
+                type_: AstType::I64,
+                init: Some(Box::new(Expr::Binary(Box::new(Binary {
+                    op: BinaryOp::Add,
+                    left: Box::new(Expr::Variable(Variable_ {
+                        name: "y".to_string(),
+                        type_: AstType::I64,
+                    })),
+                    right: Box::new(Expr::Literal(Literal::Int(5))),
+                })))),
+            }),
+            // return (a + b) * (a - b)
+            Stmt::Return(Return {
+                value: Some(Box::new(Expr::Binary(Box::new(Binary {
+                    op: BinaryOp::Mul,
+                    left: Box::new(Expr::Binary(Box::new(Binary {
+                        op: BinaryOp::Add,
+                        left: Box::new(Expr::Variable(Variable_ {
+                            name: "a".to_string(),
+                            type_: AstType::I64,
+                        })),
+                        right: Box::new(Expr::Variable(Variable_ {
+                            name: "b".to_string(),
+                            type_: AstType::I64,
+                        })),
+                    }))),
+                    right: Box::new(Expr::Binary(Box::new(Binary {
+                        op: BinaryOp::Sub,
+                        left: Box::new(Expr::Variable(Variable_ {
+                            name: "a".to_string(),
+                            type_: AstType::I64,
+                        })),
+                        right: Box::new(Expr::Variable(Variable_ {
+                            name: "b".to_string(),
+                            type_: AstType::I64,
+                        })),
+                    }))),
+                })))),
+            }),
+        ],
+    };
+
+    let result = codegen.compile_stmt(&Stmt::FuncDef(test_func));
+    assert_and_dump(result, &codegen);
+
+    type CalcFunc = unsafe extern "C" fn(i64, i64) -> i64;
+    let func: JitFunction<CalcFunc> = codegen.get_function("calc").unwrap();
+    
+    unsafe {
+        // For x=3, y=2:
+        // a = 3 * 2 = 6
+        // b = 2 + 5 = 7
+        // result = (6 + 7) * (6 - 7) = 13 * -1 = -13
+        assert_eq!(func.call(3, 2), -13);
+        
+        // For x=5, y=3:
+        // a = 5 * 2 = 10
+        // b = 3 + 5 = 8
+        // result = (10 + 8) * (10 - 8) = 18 * 2 = 36
+        assert_eq!(func.call(5, 3), 36);
+    }
 }

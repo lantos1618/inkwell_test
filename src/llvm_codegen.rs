@@ -102,7 +102,7 @@ impl<'ctx> CodeGen<'ctx> {
             AstType::Char => Ok(self.context.i8_type().into()),
             // Complex types - currently unsupported
             AstType::Void => Err(CodegenError::UnsupportedType.into()),
-            AstType::String => Ok(self.context.i8_type().ptr_type(inkwell::AddressSpace::default()).into()),
+            AstType::String => Ok(self.context.ptr_type(inkwell::AddressSpace::default()).into()),
             AstType::Struct(name) => {
                 if let Some(struct_type) = self.struct_types.borrow().get(name) {
                     Ok(struct_type.as_basic_type_enum())
@@ -265,10 +265,24 @@ impl<'ctx> CodeGen<'ctx> {
             Literal::Bool(b) => Ok(self.context.bool_type().const_int(*b as u64, false).into()),
             Literal::Char(c) => Ok(self.context.i8_type().const_int(*c as u64, false).into()),
             Literal::String(s) => {
-                // Create a constant string and get a pointer to it
-                let string_ptr = self.builder.build_global_string_ptr(s, "str")
-                    .map_err(|_| CodegenError::UnsupportedType)?;
-                Ok(string_ptr.as_pointer_value().into())
+                // Create string constant in the current context
+                let str_type = self.context.i8_type().array_type(s.len() as u32 + 1);
+                let global = self.module.add_global(str_type, None, "str");
+                global.set_constant(true);
+                global.set_unnamed_addr(true);
+                
+                // Create string constant with null terminator
+                let mut string_chars: Vec<u8> = s.bytes().collect();
+                string_chars.push(0); // Null terminator
+                let const_string = self.context.i8_type()
+                    .const_array(&string_chars.iter()
+                        .map(|c| self.context.i8_type().const_int(*c as u64, false))
+                        .collect::<Vec<_>>());
+                
+                global.set_initializer(&const_string);
+                
+                // Get pointer to the string
+                Ok(global.as_pointer_value().into())
             }
         }
     }
@@ -331,6 +345,8 @@ impl<'ctx> CodeGen<'ctx> {
             inkwell::values::BasicValueEnum::IntValue(val) => val,
             _ => return Err(CodegenError::InvalidCondition.into()),
         };
+
+        // Branch to then or else block
         self.builder.build_conditional_branch(condition, then_block, else_block)
             .map_err(|_| CodegenError::InvalidCondition)?;
 
@@ -339,10 +355,16 @@ impl<'ctx> CodeGen<'ctx> {
         for stmt in &if_stmt.then_branch {
             self.compile_stmt(stmt)?;
         }
-        let then_has_terminator = self.builder.get_insert_block()
+        
+        let then_terminates = self.builder.get_insert_block()
             .unwrap()
             .get_terminator()
             .is_some();
+
+        if !then_terminates {
+            self.builder.build_unconditional_branch(merge_block)
+                .map_err(|_| CodegenError::InvalidCondition)?;
+        }
 
         // Compile else block
         self.builder.position_at_end(else_block);
@@ -351,27 +373,26 @@ impl<'ctx> CodeGen<'ctx> {
                 self.compile_stmt(stmt)?;
             }
         }
-        let else_has_terminator = self.builder.get_insert_block()
+        
+        let else_terminates = self.builder.get_insert_block()
             .unwrap()
             .get_terminator()
             .is_some();
 
-        // Only add merge block if needed
-        if !then_has_terminator || !else_has_terminator {
-            if !then_has_terminator {
-                self.builder.position_at_end(then_block);
-                self.builder.build_unconditional_branch(merge_block)
-                    .map_err(|_| CodegenError::InvalidCondition)?;
-            }
-            if !else_has_terminator {
-                self.builder.position_at_end(else_block);
-                self.builder.build_unconditional_branch(merge_block)
-                    .map_err(|_| CodegenError::InvalidCondition)?;
-            }
+        if !else_terminates {
+            self.builder.build_unconditional_branch(merge_block)
+                .map_err(|_| CodegenError::InvalidCondition)?;
+        }
+
+        // Only position at merge block if either branch could reach it
+        if !then_terminates || !else_terminates {
             self.builder.position_at_end(merge_block);
         } else {
-            // Both branches have terminators, remove the merge block
-            merge_block.remove_from_function().map_err(|_| CodegenError::InvalidCondition)?;
+            // If both branches terminate (e.g., with return statements),
+            // we can delete the unreachable merge block
+            unsafe {
+                merge_block.delete().map_err(|_| CodegenError::InvalidCondition)?;
+            }
         }
 
         Ok(())
@@ -414,8 +435,12 @@ impl<'ctx> CodeGen<'ctx> {
         for stmt in &loop_stmt.body {
             self.compile_stmt(stmt)?;
         }
-        self.builder.build_unconditional_branch(cond_block)
-            .map_err(|_| CodegenError::InvalidCondition)?;
+
+        // Only branch back to condition if the block doesn't already have a terminator
+        if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+            self.builder.build_unconditional_branch(cond_block)
+                .map_err(|_| CodegenError::InvalidCondition)?;
+        }
 
         // Continue after loop
         self.builder.position_at_end(end_block);
@@ -440,17 +465,19 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     fn compile_break(&self) -> Result<()> {
-        // Create a longer-lived borrow
         let loop_stack = self.loop_stack.borrow();
         let loop_context = loop_stack.last()
             .ok_or(CodegenError::BreakOutsideLoop)?;
         
-        self.builder.build_unconditional_branch(loop_context.end_block).unwrap();
-        
-        // Create a new block for unreachable code after break
+        // Branch to loop end block
+        self.builder.build_unconditional_branch(loop_context.end_block)
+            .map_err(|_| CodegenError::InvalidCondition)?;
+
+        // Create unreachable block for any code after break
         let parent = self.builder.get_insert_block().unwrap().get_parent().unwrap();
         let unreachable_block = self.context.append_basic_block(parent, "after_break");
         self.builder.position_at_end(unreachable_block);
+        self.builder.build_unreachable().map_err(|_| CodegenError::InvalidCondition)?;
         
         Ok(())
     }
@@ -486,13 +513,11 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     fn compile_struct_def(&self, struct_def: &StructDef) -> Result<()> {
-        // Get the struct type from our cache
         let struct_type = self.struct_types.borrow()
             .get(&struct_def.name)
             .ok_or(CodegenError::UnsupportedType)?
             .clone();
 
-        // Create an insertion block if we don't have one
         self.ensure_insertion_block()?;
 
         // Allocate space for the struct
@@ -649,6 +674,15 @@ impl<'ctx> CodeGen<'ctx> {
 
     pub fn get_execution_engine(&self) -> &ExecutionEngine<'ctx> {
         &self.execution_engine
+    }
+}
+
+impl<'ctx> Drop for CodeGen<'ctx> {
+    fn drop(&mut self) {
+        // Clear all references before dropping
+        self.variables.borrow_mut().clear();
+        self.struct_types.borrow_mut().clear();
+        self.loop_stack.borrow_mut().clear();
     }
 }
 
