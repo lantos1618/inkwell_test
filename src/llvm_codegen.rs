@@ -11,9 +11,6 @@ use anyhow::Result;
 use crate::ast::*;
 use crate::error::CodegenError;
 
-/// Convenience type alias for the `sum` function.
-type SumFunc = unsafe extern "C" fn(u64, u64, u64) -> u64;
-
 struct LoopContext<'ctx> {
     condition_block: inkwell::basic_block::BasicBlock<'ctx>,
     end_block: inkwell::basic_block::BasicBlock<'ctx>,
@@ -105,8 +102,17 @@ impl<'ctx> CodeGen<'ctx> {
             AstType::Char => Ok(self.context.i8_type().into()),
             // Complex types - currently unsupported
             AstType::Void => Err(CodegenError::UnsupportedType.into()),
-            AstType::String => Err(CodegenError::UnsupportedType.into()),
-            AstType::Struct(_) => Err(CodegenError::UnsupportedType.into()),
+            AstType::String => Ok(self.context.i8_type().ptr_type(inkwell::AddressSpace::default()).into()),
+            AstType::Struct(name) => {
+                if let Some(struct_type) = self.struct_types.borrow().get(name) {
+                    Ok(struct_type.as_basic_type_enum())
+                } else {
+                    // Create an opaque struct type if it doesn't exist yet
+                    let struct_type = self.context.opaque_struct_type(name);
+                    self.struct_types.borrow_mut().insert(name.clone(), struct_type);
+                    Ok(struct_type.as_basic_type_enum())
+                }
+            },
             AstType::Enum(_) => Err(CodegenError::UnsupportedType.into()),
             AstType::TypeAlias(_) => Err(CodegenError::UnsupportedType.into()),
         }
@@ -134,8 +140,16 @@ impl<'ctx> CodeGen<'ctx> {
             None => self.context.void_type().fn_type(&param_types, false),
         };
 
-        // Add function to module
-        self.module.add_function(&func_decl.name, fn_type, None);
+        // Add function to module with proper parameter names
+        let function = self.module.add_function(&func_decl.name, fn_type, None);
+        
+        // Set parameter names
+        for (i, (param_name, _)) in func_decl.params.iter().enumerate() {
+            function.get_nth_param(i as u32)
+                .unwrap()
+                .set_name(param_name);
+        }
+
         Ok(())
     }
 
@@ -206,15 +220,21 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     fn compile_assign(&self, assign: &Assign) -> Result<()> {
-        // Get pointer to variable
+        // First check local variables
+        if let Some(var_ptr) = self.variables.borrow().get(&assign.target.name) {
+            let value = self.compile_expr(&assign.value)?;
+            self.builder.build_store(*var_ptr, value)
+                .map_err(|_| CodegenError::UnsupportedType)?;
+            return Ok(());
+        }
+        
+        // Then check global variables
         let var_ptr = self.module.get_global(&assign.target.name)
             .ok_or(CodegenError::VariableNotFound)?;
         
-        // Compile the value expression
         let value = self.compile_expr(&assign.value)?;
-        
-        // Build store instruction
-        self.builder.build_store(var_ptr.as_pointer_value(), value).unwrap();
+        self.builder.build_store(var_ptr.as_pointer_value(), value)
+            .map_err(|_| CodegenError::UnsupportedType)?;
         Ok(())
     }
 
@@ -256,8 +276,12 @@ impl<'ctx> CodeGen<'ctx> {
     fn compile_variable(&self, var: &Variable_) -> Result<inkwell::values::BasicValueEnum<'ctx>> {
         // First check local variables
         if let Some(var_ptr) = self.variables.borrow().get(&var.name) {
-            return Ok(self.builder.build_load(var_ptr.get_type(), *var_ptr, &var.name)
-                .map_err(|_| CodegenError::UnsupportedType)?);
+            let loaded = self.builder.build_load(
+                self.into_llvm_type(&var.type_)?,  // Use the variable's type
+                *var_ptr,
+                &var.name
+            ).map_err(|_| CodegenError::UnsupportedType)?;
+            return Ok(loaded);
         }
         
         // Then check global variables
@@ -265,7 +289,7 @@ impl<'ctx> CodeGen<'ctx> {
             .ok_or(CodegenError::VariableNotFound)?;
         
         Ok(self.builder.build_load(
-            var_ptr.as_pointer_value().get_type(),
+            self.into_llvm_type(&var.type_)?,  // Use the variable's type
             var_ptr.as_pointer_value(),
             &var.name,
         ).map_err(|_| CodegenError::UnsupportedType)?)
@@ -289,43 +313,19 @@ impl<'ctx> CodeGen<'ctx> {
             .ok_or(CodegenError::UnsupportedExpression)?)
     }
 
-    /// JIT compiles a sum function and returns a callable JIT function.
-    pub fn jit_compile_sum(&self) -> Option<JitFunction<SumFunc>> {
-        let i64_type = self.context.i64_type();
-        let fn_type = i64_type.fn_type(&[i64_type.into(), i64_type.into(), i64_type.into()], false);
-        let function = self.module.add_function("sum", fn_type, None);
-        let basic_block = self.context.append_basic_block(function, "entry");
-
-        self.builder.position_at_end(basic_block);
-
-        // Sum the three parameters
-        let x = function.get_nth_param(0)?.into_int_value();
-        let y = function.get_nth_param(1)?.into_int_value();
-        let z = function.get_nth_param(2)?.into_int_value();
-
-        let sum = self.builder.build_int_add(x, y, "sum").unwrap();
-        let sum = self.builder.build_int_add(sum, z, "sum_total").unwrap();
-
-        self.builder.build_return(Some(&sum)).unwrap();
-
-        unsafe { self.execution_engine.get_function("sum").ok() }
-    }
-
     fn compile_if(&self, if_stmt: &IfStmt) -> Result<()> {
         self.ensure_insertion_block()?;
         
-        // Get parent function
         let parent = self.builder.get_insert_block()
             .ok_or(CodegenError::InvalidCondition)?
             .get_parent()
             .ok_or(CodegenError::InvalidCondition)?;
 
-        // Create basic blocks
         let then_block = self.context.append_basic_block(parent, "then");
         let else_block = self.context.append_basic_block(parent, "else");
         let merge_block = self.context.append_basic_block(parent, "merge");
 
-        // Compile condition and create conditional branch
+        // Compile condition
         let condition = self.compile_expr(&if_stmt.condition)?;
         let condition = match condition {
             inkwell::values::BasicValueEnum::IntValue(val) => val,
@@ -339,10 +339,10 @@ impl<'ctx> CodeGen<'ctx> {
         for stmt in &if_stmt.then_branch {
             self.compile_stmt(stmt)?;
         }
-        if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
-            self.builder.build_unconditional_branch(merge_block)
-                .map_err(|_| CodegenError::InvalidCondition)?;
-        }
+        let then_has_terminator = self.builder.get_insert_block()
+            .unwrap()
+            .get_terminator()
+            .is_some();
 
         // Compile else block
         self.builder.position_at_end(else_block);
@@ -351,13 +351,29 @@ impl<'ctx> CodeGen<'ctx> {
                 self.compile_stmt(stmt)?;
             }
         }
-        if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
-            self.builder.build_unconditional_branch(merge_block)
-                .map_err(|_| CodegenError::InvalidCondition)?;
+        let else_has_terminator = self.builder.get_insert_block()
+            .unwrap()
+            .get_terminator()
+            .is_some();
+
+        // Only add merge block if needed
+        if !then_has_terminator || !else_has_terminator {
+            if !then_has_terminator {
+                self.builder.position_at_end(then_block);
+                self.builder.build_unconditional_branch(merge_block)
+                    .map_err(|_| CodegenError::InvalidCondition)?;
+            }
+            if !else_has_terminator {
+                self.builder.position_at_end(else_block);
+                self.builder.build_unconditional_branch(merge_block)
+                    .map_err(|_| CodegenError::InvalidCondition)?;
+            }
+            self.builder.position_at_end(merge_block);
+        } else {
+            // Both branches have terminators, remove the merge block
+            merge_block.remove_from_function().map_err(|_| CodegenError::InvalidCondition)?;
         }
 
-        // Continue in merge block
-        self.builder.position_at_end(merge_block);
         Ok(())
     }
 
@@ -460,19 +476,24 @@ impl<'ctx> CodeGen<'ctx> {
             .iter()
             .map(|(_, ty)| self.into_llvm_type(ty))
             .collect();
+        let field_types = field_types?;
         
         let struct_type = self.context.opaque_struct_type(&struct_decl.name);
-        struct_type.set_body(&field_types?, false);
+        struct_type.set_body(&field_types, false);
         
         self.struct_types.borrow_mut().insert(struct_decl.name.clone(), struct_type);
         Ok(())
     }
 
     fn compile_struct_def(&self, struct_def: &StructDef) -> Result<()> {
+        // Get the struct type from our cache
         let struct_type = self.struct_types.borrow()
             .get(&struct_def.name)
             .ok_or(CodegenError::UnsupportedType)?
             .clone();
+
+        // Create an insertion block if we don't have one
+        self.ensure_insertion_block()?;
 
         // Allocate space for the struct
         let struct_ptr = self.builder.build_alloca(struct_type, &struct_def.name)
@@ -481,18 +502,21 @@ impl<'ctx> CodeGen<'ctx> {
         // Compile and store each field
         for (i, (field_name, field_expr)) in struct_def.fields.iter().enumerate() {
             let field_value = self.compile_expr(field_expr)?;
-            let field_ptr = unsafe {
-                self.builder.build_struct_gep(
-                    struct_type,  // Add the struct type as first argument
-                    struct_ptr,
-                    i as u32,
-                    field_name
-                ).map_err(|_| CodegenError::UnsupportedType)?
-            };
+            
+            // Get pointer to the field
+            let field_ptr = self.builder.build_struct_gep(
+                struct_type,
+                struct_ptr,
+                i as u32,
+                field_name
+            ).map_err(|_| CodegenError::UnsupportedType)?;
+            
+            // Store the field value
             self.builder.build_store(field_ptr, field_value)
                 .map_err(|_| CodegenError::UnsupportedType)?;
         }
 
+        // Store the struct pointer in our variables map
         self.variables.borrow_mut().insert(struct_def.name.clone(), struct_ptr);
         Ok(())
     }
@@ -551,32 +575,35 @@ impl<'ctx> CodeGen<'ctx> {
             (BinaryOp::Gt,
              inkwell::values::BasicValueEnum::IntValue(l),
              inkwell::values::BasicValueEnum::IntValue(r)) => {
-                Ok(self.builder.build_int_compare(
+                let cmp = self.builder.build_int_compare(
                     inkwell::IntPredicate::SGT,
                     l,
                     r,
                     "gttmp"
-                ).map_err(|_| CodegenError::UnsupportedExpression)?.into())
+                ).map_err(|_| CodegenError::UnsupportedExpression)?;
+                Ok(cmp.into())
             },
             (BinaryOp::Lt,
              inkwell::values::BasicValueEnum::IntValue(l),
              inkwell::values::BasicValueEnum::IntValue(r)) => {
-                Ok(self.builder.build_int_compare(
+                let cmp = self.builder.build_int_compare(
                     inkwell::IntPredicate::SLT,
                     l,
                     r,
                     "lttmp"
-                ).map_err(|_| CodegenError::UnsupportedExpression)?.into())
+                ).map_err(|_| CodegenError::UnsupportedExpression)?;
+                Ok(cmp.into())
             },
             (BinaryOp::Le,
              inkwell::values::BasicValueEnum::IntValue(l),
              inkwell::values::BasicValueEnum::IntValue(r)) => {
-                Ok(self.builder.build_int_compare(
+                let cmp = self.builder.build_int_compare(
                     inkwell::IntPredicate::SLE,
                     l,
                     r,
                     "letmp"
-                ).map_err(|_| CodegenError::UnsupportedExpression)?.into())
+                ).map_err(|_| CodegenError::UnsupportedExpression)?;
+                Ok(cmp.into())
             },
             _ => Err(CodegenError::UnsupportedExpression.into()),
         }
