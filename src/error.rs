@@ -1,9 +1,7 @@
 use thiserror::Error;
 
-#[derive(Error, Debug)]
+#[derive(Debug, Error)]
 pub enum CodegenError {
-    #[error("Unable to JIT compile `sum`")]
-    JitCompile,
     #[error("Unsupported type")]
     UnsupportedType,
     

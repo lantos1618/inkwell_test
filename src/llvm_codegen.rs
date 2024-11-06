@@ -1,9 +1,11 @@
 use inkwell::builder::Builder;
 use inkwell::context::Context;
-use inkwell::execution_engine::{ExecutionEngine, JitFunction};
+use inkwell::execution_engine::{ExecutionEngine, JitFunction, UnsafeFunctionPointer};
 use inkwell::module::Module;
 use inkwell::types::BasicType;
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 
 use anyhow::Result;
 use crate::ast::*;
@@ -12,11 +14,18 @@ use crate::error::CodegenError;
 /// Convenience type alias for the `sum` function.
 type SumFunc = unsafe extern "C" fn(u64, u64, u64) -> u64;
 
+struct LoopContext<'ctx> {
+    condition_block: inkwell::basic_block::BasicBlock<'ctx>,
+    end_block: inkwell::basic_block::BasicBlock<'ctx>,
+}
+
 pub struct CodeGen<'ctx> {
     context: &'ctx Context,
-    module: Module<'ctx>,
+    pub module: Module<'ctx>,
     builder: Builder<'ctx>,
-    execution_engine: ExecutionEngine<'ctx>,
+    pub execution_engine: ExecutionEngine<'ctx>,
+    loop_stack: RefCell<Vec<LoopContext<'ctx>>>,
+    variables: RefCell<HashMap<String, inkwell::values::PointerValue<'ctx>>>,
 }
 
 impl<'ctx> CodeGen<'ctx> {
@@ -32,6 +41,8 @@ impl<'ctx> CodeGen<'ctx> {
             module,
             builder,
             execution_engine,
+            loop_stack: RefCell::new(Vec::new()),
+            variables: RefCell::new(HashMap::new()),
         }
     }
 
@@ -73,8 +84,9 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     /// Translates AST types to LLVM types.
-    fn into_llvm_type(&self, ast_type: &AstType ) -> Result<inkwell::types::BasicTypeEnum<'ctx>> {
+    fn into_llvm_type(&self, ast_type: &AstType) -> Result<inkwell::types::BasicTypeEnum<'ctx>> {
         match ast_type {
+            // Integer types
             AstType::I8 => Ok(self.context.i8_type().into()),
             AstType::I16 => Ok(self.context.i16_type().into()),
             AstType::I32 => Ok(self.context.i32_type().into()),
@@ -83,41 +95,36 @@ impl<'ctx> CodeGen<'ctx> {
             AstType::U16 => Ok(self.context.i16_type().into()),
             AstType::U32 => Ok(self.context.i32_type().into()),
             AstType::U64 => Ok(self.context.i64_type().into()),
+            // Floating point types
             AstType::F32 => Ok(self.context.f32_type().into()),
             AstType::F64 => Ok(self.context.f64_type().into()),
+            // Other basic types
             AstType::Bool => Ok(self.context.bool_type().into()),
-            AstType::Char => Ok(self.context.i8_type().into()), // Assuming `char` is an 8-bit integer
-            AstType::Void => todo!(),
-            AstType::Enum(_) => todo!(),
-            AstType::TypeAlias(_) => todo!(),
-            AstType::String => todo!(),
-            AstType::Struct(_) => todo!(),
+            AstType::Char => Ok(self.context.i8_type().into()),
+            // Complex types - currently unsupported
+            AstType::Void => Err(CodegenError::UnsupportedType.into()),
+            AstType::String => Err(CodegenError::UnsupportedType.into()),
+            AstType::Struct(_) => Err(CodegenError::UnsupportedType.into()),
+            AstType::Enum(_) => Err(CodegenError::UnsupportedType.into()),
+            AstType::TypeAlias(_) => Err(CodegenError::UnsupportedType.into()),
         }
     }
 
     fn compile_func_decl(&self, func_decl: &FuncDecl) -> Result<()> {
-        // Convert parameter types to LLVM types
-        let param_types: Result<Vec<_>> = func_decl.params
+        // Convert parameter types to LLVM types in one step
+        let param_types: Vec<_> = func_decl.params
             .iter()
             .map(|(_, ty)| self.into_llvm_type(ty))
-            .collect();
-        let param_types = param_types?;
-        
-        // Convert param_types to BasicMetadataTypeEnum
-        let param_types: Vec<_> = param_types.iter()
+            .collect::<Result<Vec<_>>>()?
+            .iter()
             .map(|t| t.as_basic_type_enum().into())
             .collect();
 
-        // Get return type
+        // Create function type based on return type
         let fn_type = match &func_decl.return_type {
             Some(ast_type) => {
                 let return_type = self.into_llvm_type(ast_type)?;
-                match return_type {
-                    inkwell::types::BasicTypeEnum::IntType(t) => t.fn_type(&param_types, false),
-                    inkwell::types::BasicTypeEnum::FloatType(t) => t.fn_type(&param_types, false),
-                    inkwell::types::BasicTypeEnum::PointerType(t) => t.fn_type(&param_types, false),
-                    _ => return Err(CodegenError::UnsupportedType.into()),
-                }
+                return_type.fn_type(&param_types, false)
             },
             None => self.context.void_type().fn_type(&param_types, false),
         };
@@ -139,24 +146,55 @@ impl<'ctx> CodeGen<'ctx> {
         let basic_block = self.context.append_basic_block(function, "entry");
         self.builder.position_at_end(basic_block);
 
+        // Clear any existing variables
+        self.variables.borrow_mut().clear();
+
+        // Create allocas for parameters and store the arguments
+        for (i, (param_name, param_type)) in func_def.decl.params.iter().enumerate() {
+            let param = function.get_nth_param(i as u32)
+                .ok_or(CodegenError::UnsupportedType)?;
+            
+            let alloca = self.builder.build_alloca(
+                self.into_llvm_type(param_type)?,
+                param_name
+            ).map_err(|_| CodegenError::UnsupportedType)?;
+            
+            self.builder.build_store(alloca, param)
+                .map_err(|_| CodegenError::UnsupportedType)?;
+            
+            self.variables.borrow_mut().insert(param_name.clone(), alloca);
+        }
+
         // Compile function body
         for stmt in &func_def.body {
             self.compile_stmt(stmt)?;
+        }
+
+        // Add a return void if no return statement was added
+        if function.get_type().get_return_type().is_none() 
+            && self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+            self.builder.build_return(None)?;
         }
 
         Ok(())
     }
 
     fn compile_var_decl(&self, var_decl: &VarDecl) -> Result<()> {
+        self.ensure_insertion_block()?;
         let var_type = self.into_llvm_type(&var_decl.type_)?;
         
         // Create alloca instruction at the entry of the function
-        let alloca = self.builder.build_alloca(var_type, &var_decl.name).unwrap();
+        let alloca = self.builder.build_alloca(var_type, &var_decl.name)
+            .map_err(|_| CodegenError::UnsupportedType)?;
+        
+        // Store the variable in our map
+        self.variables.borrow_mut().insert(var_decl.name.clone(), alloca);
         
         // If there's an initializer, compile it and store the result
         if let Some(init) = &var_decl.init {
             let init_val = self.compile_expr(init)?;
-            self.builder.build_store(alloca, init_val).unwrap();
+            self.builder.build_store(alloca, init_val)
+                .map_err(|_| CodegenError::UnsupportedType)?;
         }
         
         Ok(())
@@ -182,7 +220,8 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(())
     }
 
-    fn compile_expr(&self, expr: &Expr) -> Result<inkwell::values::BasicValueEnum<'ctx>> {
+    pub fn compile_expr(&self, expr: &Expr) -> Result<inkwell::values::BasicValueEnum<'ctx>> {
+        self.ensure_insertion_block()?;
         match expr {
             Expr::Literal(lit) => self.compile_literal(lit),
             Expr::Variable(var) => self.compile_variable(var),
@@ -200,20 +239,26 @@ impl<'ctx> CodeGen<'ctx> {
             Literal::Float(f) => Ok(self.context.f64_type().const_float(*f).into()),
             Literal::Bool(b) => Ok(self.context.bool_type().const_int(*b as u64, false).into()),
             Literal::Char(c) => Ok(self.context.i8_type().const_int(*c as u64, false).into()),
-            Literal::String(_) => Err(CodegenError::UnsupportedType.into()), // String literals need more complex handling
+            Literal::String(_) => Err(CodegenError::UnsupportedType.into()),
         }
     }
 
     fn compile_variable(&self, var: &Variable_) -> Result<inkwell::values::BasicValueEnum<'ctx>> {
-        // Get pointer to variable
+        // First check local variables
+        if let Some(var_ptr) = self.variables.borrow().get(&var.name) {
+            return Ok(self.builder.build_load(var_ptr.get_type(), *var_ptr, &var.name)
+                .map_err(|_| CodegenError::UnsupportedType)?);
+        }
+        
+        // Then check global variables
         let var_ptr = self.module.get_global(&var.name)
             .ok_or(CodegenError::VariableNotFound)?;
         
-        // Get the type for the load instruction
-        let ptr_type = var_ptr.as_pointer_value().get_type();
-        
-        // Load value from pointer with the correct type
-        Ok(self.builder.build_load(ptr_type, var_ptr.as_pointer_value(), &var.name).unwrap())
+        Ok(self.builder.build_load(
+            var_ptr.as_pointer_value().get_type(),
+            var_ptr.as_pointer_value(),
+            &var.name,
+        ).map_err(|_| CodegenError::UnsupportedType)?)
     }
 
     fn compile_func_call(&self, func_call: &FuncCall) -> Result<inkwell::values::BasicValueEnum<'ctx>> {
@@ -257,36 +302,49 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     fn compile_if(&self, if_stmt: &IfStmt) -> Result<()> {
-        let parent = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+        self.ensure_insertion_block()?;
         
+        // Get parent function
+        let parent = self.builder.get_insert_block()
+            .ok_or(CodegenError::InvalidCondition)?
+            .get_parent()
+            .ok_or(CodegenError::InvalidCondition)?;
+
+        // Create basic blocks
         let then_block = self.context.append_basic_block(parent, "then");
         let else_block = self.context.append_basic_block(parent, "else");
         let merge_block = self.context.append_basic_block(parent, "merge");
 
-        // Compile condition
+        // Compile condition and create conditional branch
         let condition = self.compile_expr(&if_stmt.condition)?;
         let condition = match condition {
             inkwell::values::BasicValueEnum::IntValue(val) => val,
             _ => return Err(CodegenError::InvalidCondition.into()),
         };
-
-        self.builder.build_conditional_branch(condition, then_block, else_block).unwrap();
+        self.builder.build_conditional_branch(condition, then_block, else_block)
+            .map_err(|_| CodegenError::InvalidCondition)?;
 
         // Compile then block
         self.builder.position_at_end(then_block);
         for stmt in &if_stmt.then_branch {
             self.compile_stmt(stmt)?;
         }
-        self.builder.build_unconditional_branch(merge_block).unwrap();
+        if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+            self.builder.build_unconditional_branch(merge_block)
+                .map_err(|_| CodegenError::InvalidCondition)?;
+        }
 
-        // Compile else block if it exists
+        // Compile else block
         self.builder.position_at_end(else_block);
         if let Some(else_branch) = &if_stmt.else_branch {
             for stmt in else_branch {
                 self.compile_stmt(stmt)?;
             }
         }
-        self.builder.build_unconditional_branch(merge_block).unwrap();
+        if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+            self.builder.build_unconditional_branch(merge_block)
+                .map_err(|_| CodegenError::InvalidCondition)?;
+        }
 
         // Continue in merge block
         self.builder.position_at_end(merge_block);
@@ -294,14 +352,25 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     fn compile_loop(&self, loop_stmt: &LoopStmt) -> Result<()> {
-        let parent = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+        self.ensure_insertion_block()?;
+        let parent = self.builder.get_insert_block()
+            .ok_or(CodegenError::InvalidCondition)?
+            .get_parent()
+            .ok_or(CodegenError::InvalidCondition)?;
         
         let cond_block = self.context.append_basic_block(parent, "loop_cond");
         let body_block = self.context.append_basic_block(parent, "loop_body");
         let end_block = self.context.append_basic_block(parent, "loop_end");
 
+        // Push loop context
+        self.loop_stack.borrow_mut().push(LoopContext {
+            condition_block: cond_block,
+            end_block: end_block,
+        });
+
         // Jump to condition
-        self.builder.build_unconditional_branch(cond_block).unwrap();
+        self.builder.build_unconditional_branch(cond_block)
+            .map_err(|_| CodegenError::InvalidCondition)?;
 
         // Compile condition
         self.builder.position_at_end(cond_block);
@@ -310,17 +379,24 @@ impl<'ctx> CodeGen<'ctx> {
             inkwell::values::BasicValueEnum::IntValue(val) => val,
             _ => return Err(CodegenError::InvalidCondition.into()),
         };
-        self.builder.build_conditional_branch(condition, body_block, end_block).unwrap();
+
+        self.builder.build_conditional_branch(condition, body_block, end_block)
+            .map_err(|_| CodegenError::InvalidCondition)?;
 
         // Compile loop body
         self.builder.position_at_end(body_block);
         for stmt in &loop_stmt.body {
             self.compile_stmt(stmt)?;
         }
-        self.builder.build_unconditional_branch(cond_block).unwrap();
+        self.builder.build_unconditional_branch(cond_block)
+            .map_err(|_| CodegenError::InvalidCondition)?;
 
         // Continue after loop
         self.builder.position_at_end(end_block);
+
+        // Pop loop context
+        self.loop_stack.borrow_mut().pop();
+        
         Ok(())
     }
 
@@ -338,15 +414,35 @@ impl<'ctx> CodeGen<'ctx> {
     }
 
     fn compile_break(&self) -> Result<()> {
-        // Find the nearest loop's end block and branch to it
-        // This is a simplified version - you'll need to track loop blocks
-        Err(CodegenError::BreakOutsideLoop.into())
+        // Create a longer-lived borrow
+        let loop_stack = self.loop_stack.borrow();
+        let loop_context = loop_stack.last()
+            .ok_or(CodegenError::BreakOutsideLoop)?;
+        
+        self.builder.build_unconditional_branch(loop_context.end_block).unwrap();
+        
+        // Create a new block for unreachable code after break
+        let parent = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+        let unreachable_block = self.context.append_basic_block(parent, "after_break");
+        self.builder.position_at_end(unreachable_block);
+        
+        Ok(())
     }
 
     fn compile_continue(&self) -> Result<()> {
-        // Find the nearest loop's condition block and branch to it
-        // This is a simplified version - you'll need to track loop blocks
-        Err(CodegenError::ContinueOutsideLoop.into())
+        // Create a longer-lived borrow
+        let loop_stack = self.loop_stack.borrow();
+        let loop_context = loop_stack.last()
+            .ok_or(CodegenError::ContinueOutsideLoop)?;
+        
+        self.builder.build_unconditional_branch(loop_context.condition_block).unwrap();
+        
+        // Create a new block for unreachable code after continue
+        let parent = self.builder.get_insert_block().unwrap().get_parent().unwrap();
+        let unreachable_block = self.context.append_basic_block(parent, "after_continue");
+        self.builder.position_at_end(unreachable_block);
+        
+        Ok(())
     }
 
     fn compile_struct_decl(&self, struct_decl: &StructDecl) -> Result<()> {
@@ -398,11 +494,12 @@ impl<'ctx> CodeGen<'ctx> {
         let left = self.compile_expr(&binary.left)?;
         let right = self.compile_expr(&binary.right)?;
 
-        match (binary.op.clone(), left, right) {
+        match (binary.op, left, right) {
             (BinaryOp::Add, 
              inkwell::values::BasicValueEnum::IntValue(l),
              inkwell::values::BasicValueEnum::IntValue(r)) => {
-                Ok(self.builder.build_int_add(l, r, "addtmp").unwrap().into())
+                Ok(self.builder.build_int_add(l, r, "addtmp")
+                    .map_err(|_| CodegenError::UnsupportedExpression)?.into())
             },
             // Add other binary operations as needed
             _ => Err(CodegenError::UnsupportedExpression.into()),
@@ -412,13 +509,36 @@ impl<'ctx> CodeGen<'ctx> {
     fn compile_unary_op(&self, unary: &Unary) -> Result<inkwell::values::BasicValueEnum<'ctx>> {
         let expr = self.compile_expr(&unary.expr)?;
 
-        match (unary.op.clone(), expr) {
+        match (unary.op, expr) {
             (UnaryOp::Neg, 
              inkwell::values::BasicValueEnum::IntValue(v)) => {
-                Ok(self.builder.build_int_neg(v, "negtmp").unwrap().into())
+                Ok(self.builder.build_int_neg(v, "negtmp")
+                    .map_err(|_| CodegenError::UnsupportedExpression)?.into())
             },
             // Add other unary operations as needed
             _ => Err(CodegenError::UnsupportedExpression.into()),
         }
     }
+
+    fn ensure_insertion_block(&self) -> Result<()> {
+        if self.builder.get_insert_block().is_none() {
+            // Create a dummy function if we don't have one
+            let void_type = self.context.void_type();
+            let fn_type = void_type.fn_type(&[], false);
+            let function = self.module.add_function("__temp", fn_type, None);
+            let basic_block = self.context.append_basic_block(function, "entry");
+            self.builder.position_at_end(basic_block);
+        }
+        Ok(())
+    }
+
+    pub fn get_function<T: UnsafeFunctionPointer>(&self, name: &str) -> Result<JitFunction<T>> {
+        unsafe {
+            self.execution_engine
+                .get_function::<T>(name)
+                .map_err(|_| CodegenError::FunctionNotFound.into())
+        }
+    }
 }
+
+
