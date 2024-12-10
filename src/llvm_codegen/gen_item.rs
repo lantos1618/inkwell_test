@@ -84,10 +84,18 @@ impl<'ctx> Codegen<'ctx> for ItemStruct {
         let struct_type = ctx.context.opaque_struct_type(&self.name);
         ctx.type_cache.insert(Type::Struct(self.name.clone()), struct_type.into());
 
-        // Then collect field types
+        // Then collect field types - this might trigger codegen of nested structs
         let field_types: Vec<_> = self.fields
             .iter()
-            .map(|f| ctx.llvm_type(&f.ty))
+            .map(|f| {
+                // If this is a struct type, ensure it's generated first
+                if let Type::Struct(name) = &f.ty {
+                    if !ctx.type_cache.contains_key(&f.ty) {
+                        panic!("Struct {} not defined before use", name);
+                    }
+                }
+                ctx.llvm_type(&f.ty)
+            })
             .collect();
 
         // Set the body (even for empty structs)
