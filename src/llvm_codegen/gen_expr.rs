@@ -1,5 +1,5 @@
 use super::{Codegen, CodegenContext};
-use crate::ast::{Expr, Literal, BinOp, UnaryOp, Block, Stmt, Type};
+use crate::ast::{Expr, Literal, BinOp, UnaryOp, Block, Stmt, AstType};
 use inkwell::{
     values::{BasicValue, BasicValueEnum, IntValue, FloatValue, BasicMetadataValueEnum, PointerValue},
     types::{BasicType, AnyTypeEnum, AsTypeRef},

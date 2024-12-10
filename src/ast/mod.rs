@@ -14,6 +14,6 @@ pub use nodes::{
     Stmt,
     Expr,
     Literal,
-    Type,
+    AstType,
     BinOp,
 }; 

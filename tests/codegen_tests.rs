@@ -18,14 +18,14 @@ fn test_simple_function() {
             name: "add42".to_string(),
             params: vec![FunctionParam {
                 name: "x".to_string(),
-                ty: Type::Int,
+                ty: AstType::Int,
             }],
-            return_type: Some(Type::Int),
+            return_type: Some(AstType::Int),
             body: Block {
                 statements: vec![
                     Stmt::Let {
                         name: "result".to_string(),
-                        ty: Some(Type::Int),
+                        ty: Some(AstType::Int),
                         value: Some(Expr::Binary {
                             op: BinOp::Add,
                             lhs: Box::new(Expr::VarRef("x".to_string())),
@@ -57,9 +57,9 @@ fn test_if_expression() {
             name: "test_if".to_string(),
             params: vec![FunctionParam {
                 name: "x".to_string(),
-                ty: Type::Int,
+                ty: AstType::Int,
             }],
-            return_type: Some(Type::Int),
+            return_type: Some(AstType::Int),
             body: Block {
                 statements: vec![Stmt::Return(Some(Expr::If {
                     condition: Box::new(Expr::Binary {
@@ -100,11 +100,11 @@ fn test_struct_definition() {
                 fields: vec![
                     StructField {
                         name: "x".to_string(),
-                        ty: Type::Int,
+                        ty: AstType::Int,
                     },
                     StructField {
                         name: "y".to_string(),
-                        ty: Type::Int,
+                        ty: AstType::Int,
                     },
                 ],
             }),
@@ -113,14 +113,14 @@ fn test_struct_definition() {
                 params: vec![
                     FunctionParam {
                         name: "x".to_string(),
-                        ty: Type::Int,
+                        ty: AstType::Int,
                     },
                     FunctionParam {
                         name: "y".to_string(),
-                        ty: Type::Int,
+                        ty: AstType::Int,
                     },
                 ],
-                return_type: Some(Type::Struct("Point".to_string())),
+                return_type: Some(AstType::Struct("Point".to_string())),
                 body: Block {
                     statements: vec![
                         // TODO: Add struct initialization once implemented
@@ -151,19 +151,19 @@ fn test_while_loop() {
             name: "sum_to".to_string(),
             params: vec![FunctionParam {
                 name: "n".to_string(),
-                ty: Type::Int,
+                ty: AstType::Int,
             }],
-            return_type: Some(Type::Int),
+            return_type: Some(AstType::Int),
             body: Block {
                 statements: vec![
                     Stmt::Let {
                         name: "sum".to_string(),
-                        ty: Some(Type::Int),
+                        ty: Some(AstType::Int),
                         value: Some(Expr::Literal(Literal::Int(0))),
                     },
                     Stmt::Let {
                         name: "i".to_string(),
-                        ty: Some(Type::Int),
+                        ty: Some(AstType::Int),
                         value: Some(Expr::Literal(Literal::Int(0))),
                     },
                     Stmt::While {
@@ -176,7 +176,7 @@ fn test_while_loop() {
                             statements: vec![
                                 Stmt::Let {
                                     name: "sum".to_string(),
-                                    ty: Some(Type::Int),
+                                    ty: Some(AstType::Int),
                                     value: Some(Expr::Binary {
                                         op: BinOp::Add,
                                         lhs: Box::new(Expr::VarRef("sum".to_string())),
@@ -185,7 +185,7 @@ fn test_while_loop() {
                                 },
                                 Stmt::Let {
                                     name: "i".to_string(),
-                                    ty: Some(Type::Int),
+                                    ty: Some(AstType::Int),
                                     value: Some(Expr::Binary {
                                         op: BinOp::Add,
                                         lhs: Box::new(Expr::VarRef("i".to_string())),
@@ -224,14 +224,14 @@ fn test_float_operations() {
             params: vec![
                 FunctionParam {
                     name: "x".to_string(),
-                    ty: Type::Float,
+                    ty: AstType::Float,
                 },
                 FunctionParam {
                     name: "y".to_string(),
-                    ty: Type::Float,
+                    ty: AstType::Float,
                 },
             ],
-            return_type: Some(Type::Float),
+            return_type: Some(AstType::Float),
             body: Block {
                 statements: vec![Stmt::Return(Some(Expr::Binary {
                     op: BinOp::Add,
@@ -269,9 +269,9 @@ fn test_variable_load() {
             name: "test_var".to_string(),
             params: vec![FunctionParam {
                 name: "x".to_string(),
-                ty: Type::Int,
+                ty: AstType::Int,
             }],
-            return_type: Some(Type::Int),
+            return_type: Some(AstType::Int),
             body: Block {
                 statements: vec![Stmt::Expr(Expr::VarRef("x".to_string()))],
             },
@@ -295,11 +295,11 @@ fn test_nested_struct() {
                 fields: vec![
                     StructField {
                         name: "x".to_string(),
-                        ty: Type::Int,
+                        ty: AstType::Int,
                     },
                     StructField {
                         name: "y".to_string(),
-                        ty: Type::Int,
+                        ty: AstType::Int,
                     },
                 ],
             }),
@@ -308,18 +308,18 @@ fn test_nested_struct() {
                 fields: vec![
                     StructField {
                         name: "top_left".to_string(),
-                        ty: Type::Struct("Point".to_string()),
+                        ty: AstType::Struct("Point".to_string()),
                     },
                     StructField {
                         name: "bottom_right".to_string(),
-                        ty: Type::Struct("Point".to_string()),
+                        ty: AstType::Struct("Point".to_string()),
                     },
                 ],
             }),
             Item::Function(ItemFunction {
                 name: "create_rect".to_string(),
                 params: vec![],
-                return_type: Some(Type::Struct("Rectangle".to_string())),
+                return_type: Some(AstType::Struct("Rectangle".to_string())),
                 body: Block { statements: vec![] },
             }),
         ],
@@ -348,13 +348,13 @@ fn test_array_type() {
                 name: "IntArray".to_string(),
                 fields: vec![StructField {
                     name: "data".to_string(),
-                    ty: Type::Array(Box::new(Type::Int)),
+                    ty: AstType::Array(Box::new(AstType::Int)),
                 }],
             }),
             Item::Function(ItemFunction {
                 name: "create_array".to_string(),
                 params: vec![],
-                return_type: Some(Type::Struct("IntArray".to_string())),
+                return_type: Some(AstType::Struct("IntArray".to_string())),
                 body: Block { statements: vec![] },
             }),
         ],
@@ -382,16 +382,16 @@ fn test_function_types() {
                 name: "Callback".to_string(),
                 fields: vec![StructField {
                     name: "func".to_string(),
-                    ty: Type::Function {
-                        params: vec![Type::Int],
-                        return_type: Box::new(Type::Int),
+                    ty: AstType::Function {
+                        params: vec![AstType::Int],
+                        return_type: Box::new(AstType::Int),
                     },
                 }],
             }),
             Item::Function(ItemFunction {
                 name: "create_callback".to_string(),
                 params: vec![],
-                return_type: Some(Type::Struct("Callback".to_string())),
+                return_type: Some(AstType::Struct("Callback".to_string())),
                 body: Block { statements: vec![] },
             }),
         ],
@@ -422,7 +422,7 @@ fn test_empty_struct() {
             Item::Function(ItemFunction {
                 name: "create_empty".to_string(),
                 params: vec![],
-                return_type: Some(Type::Struct("Empty".to_string())),
+                return_type: Some(AstType::Struct("Empty".to_string())),
                 body: Block { statements: vec![] },
             }),
         ],
@@ -443,17 +443,17 @@ fn test_nested_scopes() {
             Item::Function(ItemFunction {
                 name: "test_scopes".to_string(),
                 params: vec![],
-                return_type: Some(Type::Int),
+                return_type: Some(AstType::Int),
                 body: Block {
                     statements: vec![
                         Stmt::Let {
                             name: "x".to_string(),
-                            ty: Some(Type::Int),
+                            ty: Some(AstType::Int),
                             value: Some(Expr::Literal(Literal::Int(1))),
                         },
                         Stmt::Let {
                             name: "y".to_string(),
-                            ty: Some(Type::Int),
+                            ty: Some(AstType::Int),
                             value: Some(Expr::Literal(Literal::Int(2))),
                         },
                         Stmt::Expr(Expr::If {
@@ -462,7 +462,7 @@ fn test_nested_scopes() {
                                 statements: vec![
                                     Stmt::Let {
                                         name: "x".to_string(),  // Shadows outer x
-                                        ty: Some(Type::Int),
+                                        ty: Some(AstType::Int),
                                         value: Some(Expr::Literal(Literal::Int(3))),
                                     },
                                 ],
@@ -498,7 +498,7 @@ fn test_string_literals() {
             Item::Function(ItemFunction {
                 name: "test_strings".to_string(),
                 params: vec![],
-                return_type: Some(Type::String),
+                return_type: Some(AstType::String),
                 body: Block {
                     statements: vec![
                         Stmt::Return(Some(Expr::Literal(Literal::String("Hello, World!".to_string())))),
@@ -529,11 +529,11 @@ fn test_struct_field_access() {
                 fields: vec![
                     StructField {
                         name: "age".to_string(),
-                        ty: Type::Int,
+                        ty: AstType::Int,
                     },
                     StructField {
                         name: "height".to_string(),
-                        ty: Type::Float,
+                        ty: AstType::Float,
                     },
                 ],
             }),
@@ -542,10 +542,10 @@ fn test_struct_field_access() {
                 params: vec![
                     FunctionParam {
                         name: "person".to_string(),
-                        ty: Type::Struct("Person".to_string()),
+                        ty: AstType::Struct("Person".to_string()),
                     },
                 ],
-                return_type: Some(Type::Int),
+                return_type: Some(AstType::Int),
                 body: Block {
                     statements: vec![
                         // For now, just return a constant since field access isn't implemented
@@ -577,19 +577,19 @@ fn test_array_operations() {
                 params: vec![
                     FunctionParam {
                         name: "arr".to_string(),
-                        ty: Type::Array(Box::new(Type::Int)),
+                        ty: AstType::Array(Box::new(AstType::Int)),
                     },
                     FunctionParam {
                         name: "len".to_string(),
-                        ty: Type::Int,
+                        ty: AstType::Int,
                     },
                 ],
-                return_type: Some(Type::Int),
+                return_type: Some(AstType::Int),
                 body: Block {
                     statements: vec![
                         Stmt::Let {
                             name: "sum".to_string(),
-                            ty: Some(Type::Int),
+                            ty: Some(AstType::Int),
                             value: Some(Expr::Literal(Literal::Int(0))),
                         },
                         Stmt::Return(Some(Expr::VarRef("sum".to_string()))),
@@ -620,10 +620,10 @@ fn test_optional_types() {
                 params: vec![
                     FunctionParam {
                         name: "x".to_string(),
-                        ty: Type::Optional(Box::new(Type::Int)),
+                        ty: AstType::Optional(Box::new(AstType::Int)),
                     },
                 ],
-                return_type: Some(Type::Optional(Box::new(Type::Int))),
+                return_type: Some(AstType::Optional(Box::new(AstType::Int))),
                 body: Block {
                     statements: vec![
                         Stmt::Return(Some(Expr::VarRef("x".to_string()))),

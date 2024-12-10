@@ -1,7 +1,7 @@
 use inkwell::{context::Context, module::Module, builder::Builder, values::{BasicValueEnum, PointerValue, FunctionValue}};
 use std::collections::HashMap;
 
-use crate::ast::{Type, Program, Item, ItemFunction, ItemStruct, Block, Stmt, Expr, Literal, BinOp};
+use crate::ast::{AstType, Program, Item, ItemFunction, ItemStruct, Block, Stmt, Expr, Literal, BinOp};
 
 pub mod context;
 pub mod gen_type;

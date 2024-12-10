@@ -17,7 +17,7 @@ pub enum Item {
 pub struct ItemFunction {
     pub name: String,
     pub params: Vec<FunctionParam>,
-    pub return_type: Option<Type>,
+    pub return_type: Option<AstType>,
     pub body: Block,
 }
 
@@ -25,7 +25,7 @@ pub struct ItemFunction {
 #[derive(Debug, Clone)]
 pub struct FunctionParam {
     pub name: String,
-    pub ty: Type,
+    pub ty: AstType,
 }
 
 /// A struct definition
@@ -39,7 +39,7 @@ pub struct ItemStruct {
 #[derive(Debug, Clone)]
 pub struct StructField {
     pub name: String,
-    pub ty: Type,
+    pub ty: AstType,
 }
 
 /// A block of statements
@@ -54,7 +54,7 @@ pub enum Stmt {
     /// Let binding: let name: type = value;
     Let {
         name: String,
-        ty: Option<Type>,
+        ty: Option<AstType>,
         value: Option<Expr>,
     },
     /// Expression statement (without semicolon)
@@ -131,20 +131,20 @@ pub enum Literal {
 
 /// Types in our language
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Type {
+pub enum AstType {
     Int,
     Float,
     Bool,
     String,
     Char,
-    Array(Box<Type>),
+    Array(Box<AstType>),
     Struct(String),
     Function {
-        params: Vec<Type>,
-        return_type: Box<Type>,
+        params: Vec<AstType>,
+        return_type: Box<AstType>,
     },
-    Reference(Box<Type>),
-    Optional(Box<Type>),
+    Reference(Box<AstType>),
+    Optional(Box<AstType>),
 }
 
 /// Binary operators

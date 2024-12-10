@@ -1,5 +1,5 @@
 use super::{Codegen, CodegenContext};
-use crate::ast::{Item, ItemFunction, ItemStruct, Stmt, Type};
+use crate::ast::{Item, ItemFunction, ItemStruct, Stmt, AstType};
 use inkwell::{
     types::{BasicType, BasicTypeEnum, BasicMetadataTypeEnum},
     values::{BasicValue, BasicValueEnum, AnyValue},
@@ -23,7 +23,7 @@ impl<'ctx> Codegen<'ctx> for ItemFunction {
             .iter()
             .map(|p| {
                 match p.ty {
-                    Type::Float => ctx.context.f64_type().into(),
+                    AstType::Float => ctx.context.f64_type().into(),
                     _ => ctx.llvm_type(&p.ty).into(),
                 }
             })
@@ -32,8 +32,8 @@ impl<'ctx> Codegen<'ctx> for ItemFunction {
         // Get the return type and create function type
         let fn_type = if let Some(ret) = &self.return_type {
             match ret {
-                Type::Float => ctx.context.f64_type().fn_type(&param_types, false),
-                Type::Struct(name) => {
+                AstType::Float => ctx.context.f64_type().fn_type(&param_types, false),
+                AstType::Struct(name) => {
                     let struct_type = ctx.llvm_type(ret);
                     struct_type.fn_type(&param_types, false)
                 }
@@ -64,7 +64,7 @@ impl<'ctx> Codegen<'ctx> for ItemFunction {
         for (i, param) in self.params.iter().enumerate() {
             let arg = function.get_nth_param(i as u32).unwrap();
             let param_type = match param.ty {
-                Type::Float => ctx.context.f64_type().into(),
+                AstType::Float => ctx.context.f64_type().into(),
                 _ => ctx.llvm_type(&param.ty),
             };
             let alloc = ctx.builder.build_alloca(param_type, &param.name).unwrap();
@@ -102,10 +102,10 @@ impl<'ctx> Codegen<'ctx> for ItemFunction {
                 } else {
                     // Create appropriate default value based on return type
                     let default_val = match ret_type {
-                        Type::Int => ctx.context.i64_type().const_zero().as_basic_value_enum(),
-                        Type::Float => ctx.context.f64_type().const_float(0.0).as_basic_value_enum(),
-                        Type::Bool => ctx.context.bool_type().const_zero().as_basic_value_enum(),
-                        Type::Struct(_) => {
+                        AstType::Int => ctx.context.i64_type().const_zero().as_basic_value_enum(),
+                        AstType::Float => ctx.context.f64_type().const_float(0.0).as_basic_value_enum(),
+                        AstType::Bool => ctx.context.bool_type().const_zero().as_basic_value_enum(),
+                        AstType::Struct(_) => {
                             // Create a zero-initialized struct
                             let struct_type = ctx.llvm_type(ret_type);
                             let alloca = ctx.builder.build_alloca(struct_type, "tmp").unwrap();
@@ -129,14 +129,14 @@ impl<'ctx> Codegen<'ctx> for ItemStruct {
     fn codegen(&self, ctx: &mut CodegenContext<'ctx>) {
         // First, create the struct type and add it to the cache
         let struct_type = ctx.context.opaque_struct_type(&self.name);
-        ctx.type_cache.insert(Type::Struct(self.name.clone()), struct_type.into());
+        ctx.type_cache.insert(AstType::Struct(self.name.clone()), struct_type.into());
 
         // Then collect field types - this might trigger codegen of nested structs
         let field_types: Vec<_> = self.fields
             .iter()
             .map(|f| {
                 // If this is a struct type, ensure it's generated first
-                if let Type::Struct(name) = &f.ty {
+                if let AstType::Struct(name) = &f.ty {
                     if !ctx.type_cache.contains_key(&f.ty) {
                         panic!("Struct {} not defined before use", name);
                     }

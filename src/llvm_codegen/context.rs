@@ -7,14 +7,14 @@ use inkwell::{
 };
 use std::collections::HashMap;
 
-use crate::ast::Type;
+use crate::ast::AstType;
 
 pub struct CodegenContext<'ctx> {
     pub context: &'ctx Context,
     pub module: Module<'ctx>,
     pub builder: Builder<'ctx>,
-    pub scopes: Vec<HashMap<String, (PointerValue<'ctx>, Type)>>,
-    pub type_cache: HashMap<Type, BasicTypeEnum<'ctx>>,
+    pub scopes: Vec<HashMap<String, (PointerValue<'ctx>, AstType)>>,
+    pub type_cache: HashMap<AstType, BasicTypeEnum<'ctx>>,
     pub function_cache: HashMap<String, FunctionValue<'ctx>>,
 }
 
@@ -40,11 +40,11 @@ impl<'ctx> CodegenContext<'ctx> {
         self.scopes.pop();
     }
 
-    pub fn insert_variable(&mut self, name: &str, ptr: PointerValue<'ctx>, ty: Type) {
+    pub fn insert_variable(&mut self, name: &str, ptr: PointerValue<'ctx>, ty: AstType) {
         self.scopes.last_mut().unwrap().insert(name.to_string(), (ptr, ty));
     }
 
-    pub fn get_variable(&self, name: &str) -> Option<(PointerValue<'ctx>, &Type)> {
+    pub fn get_variable(&self, name: &str) -> Option<(PointerValue<'ctx>, &AstType)> {
         for scope in self.scopes.iter().rev() {
             if let Some((ptr, ty)) = scope.get(name) {
                 return Some((*ptr, ty));
