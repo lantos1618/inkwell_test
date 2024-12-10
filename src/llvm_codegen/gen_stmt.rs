@@ -1,5 +1,5 @@
 use super::{Codegen, CodegenContext};
-use crate::ast::Stmt;
+use crate::ast::{Stmt, Type};
 use inkwell::{
     types::BasicType,
     values::BasicValue,
@@ -10,18 +10,14 @@ impl<'ctx> Codegen<'ctx> for Stmt {
     fn codegen(&self, ctx: &mut CodegenContext<'ctx>) {
         match self {
             Stmt::Let { name, ty, value } => {
-                let llvm_ty = if let Some(t) = ty {
-                    ctx.llvm_type(t)
-                } else {
-                    // Default to i64 for now
-                    ctx.context.i64_type().into()
-                };
+                let var_type = ty.clone().unwrap_or(Type::Int);  // Default to Int if type not specified
+                let llvm_ty = ctx.llvm_type(&var_type);
                 let alloc = ctx.builder.build_alloca(llvm_ty, name).unwrap();
                 if let Some(v) = value {
                     let val = v.codegen(ctx);
                     ctx.builder.build_store(alloc, val).unwrap();
                 }
-                ctx.insert_variable(name, alloc);
+                ctx.insert_variable(name, alloc, var_type);
             }
             Stmt::Expr(e) => {
                 let _val = e.codegen(ctx);

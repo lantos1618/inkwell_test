@@ -22,10 +22,8 @@ impl<'ctx> CodegenContext<'ctx> {
                 elem_type.array_type(0).into()
             }
             Type::Struct(name) => {
-                // First, create an opaque struct type to handle recursive types
+                // Create an opaque struct type
                 let struct_type = self.context.opaque_struct_type(name);
-                // Store it in the cache immediately to handle recursive types
-                self.type_cache.insert(ty.clone(), struct_type.into());
                 struct_type.into()
             }
             Type::Function { params, return_type } => {
@@ -39,7 +37,6 @@ impl<'ctx> CodegenContext<'ctx> {
                 self.llvm_type(inner).ptr_type(AddressSpace::default()).into()
             }
             Type::Optional(inner) => {
-                // Optional is represented as a struct { value: T, is_some: bool }
                 let inner_type = self.llvm_type(inner);
                 let struct_type = self.context.struct_type(
                     &[inner_type, self.context.bool_type().into()],
@@ -49,18 +46,7 @@ impl<'ctx> CodegenContext<'ctx> {
             }
         };
 
-        // Only insert into cache if not already inserted (for recursive types)
-        if !self.type_cache.contains_key(ty) {
-            self.type_cache.insert(ty.clone(), llvm_ty);
-        }
+        self.type_cache.insert(ty.clone(), llvm_ty);
         llvm_ty
-    }
-
-    pub fn set_struct_body(&mut self, name: &str, field_types: &[BasicTypeEnum<'ctx>]) {
-        if let Some(cached) = self.type_cache.get(&Type::Struct(name.to_string())) {
-            if let BasicTypeEnum::StructType(struct_type) = cached {
-                struct_type.set_body(field_types, false);
-            }
-        }
     }
 } 

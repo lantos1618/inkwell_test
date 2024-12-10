@@ -44,7 +44,7 @@ impl<'ctx> Codegen<'ctx> for ItemFunction {
             let param_type = ctx.llvm_type(&param.ty);
             let alloc = ctx.builder.build_alloca(param_type, &param.name).unwrap();
             ctx.builder.build_store(alloc, arg).unwrap();
-            ctx.insert_variable(&param.name, alloc);
+            ctx.insert_variable(&param.name, alloc, param.ty.clone());
         }
 
         // Generate code for the function body
@@ -80,18 +80,17 @@ impl<'ctx> Codegen<'ctx> for ItemFunction {
 impl<'ctx> Codegen<'ctx> for ItemStruct {
     type Output = ();
     fn codegen(&self, ctx: &mut CodegenContext<'ctx>) {
-        // First get the struct type (creates an opaque type if it doesn't exist)
-        let _ = ctx.llvm_type(&Type::Struct(self.name.clone()));
+        // First, create the struct type and add it to the cache
+        let struct_type = ctx.context.opaque_struct_type(&self.name);
+        ctx.type_cache.insert(Type::Struct(self.name.clone()), struct_type.into());
 
-        // Then set its body with the actual field types
+        // Then collect field types
         let field_types: Vec<_> = self.fields
             .iter()
             .map(|f| ctx.llvm_type(&f.ty))
             .collect();
 
-        // Set the struct body with the collected field types
-        if let Some(BasicTypeEnum::StructType(struct_type)) = ctx.type_cache.get(&Type::Struct(self.name.clone())) {
-            struct_type.set_body(&field_types, false);
-        }
+        // Set the body (even for empty structs)
+        struct_type.set_body(&field_types, false);
     }
 } 

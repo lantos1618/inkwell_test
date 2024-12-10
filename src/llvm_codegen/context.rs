@@ -13,7 +13,7 @@ pub struct CodegenContext<'ctx> {
     pub context: &'ctx Context,
     pub module: Module<'ctx>,
     pub builder: Builder<'ctx>,
-    pub scopes: Vec<HashMap<String, PointerValue<'ctx>>>,
+    pub scopes: Vec<HashMap<String, (PointerValue<'ctx>, Type)>>,
     pub type_cache: HashMap<Type, BasicTypeEnum<'ctx>>,
     pub function_cache: HashMap<String, FunctionValue<'ctx>>,
 }
@@ -40,14 +40,14 @@ impl<'ctx> CodegenContext<'ctx> {
         self.scopes.pop();
     }
 
-    pub fn insert_variable(&mut self, name: &str, ptr: PointerValue<'ctx>) {
-        self.scopes.last_mut().unwrap().insert(name.to_string(), ptr);
+    pub fn insert_variable(&mut self, name: &str, ptr: PointerValue<'ctx>, ty: Type) {
+        self.scopes.last_mut().unwrap().insert(name.to_string(), (ptr, ty));
     }
 
-    pub fn get_variable(&self, name: &str) -> Option<PointerValue<'ctx>> {
+    pub fn get_variable(&self, name: &str) -> Option<(PointerValue<'ctx>, &Type)> {
         for scope in self.scopes.iter().rev() {
-            if let Some(val) = scope.get(name) {
-                return Some(*val);
+            if let Some((ptr, ty)) = scope.get(name) {
+                return Some((*ptr, ty));
             }
         }
         None

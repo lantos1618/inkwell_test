@@ -55,11 +55,11 @@ impl<'ctx> Codegen<'ctx> for Expr {
                     .as_basic_value_enum(),
             },
             Expr::VarRef(name) => {
-                if let Some(ptr) = ctx.get_variable(name) {
-                    ctx.builder.build_load(ptr.get_type(), ptr, name).unwrap()
-                } else {
-                    panic!("Undefined variable {}", name);
-                }
+                let (ptr, var_type) = ctx.get_variable(name)
+                    .unwrap_or_else(|| panic!("Undefined variable {}", name));
+                let var_type = var_type.clone();
+                let llvm_type = ctx.llvm_type(&var_type);
+                ctx.builder.build_load(llvm_type, ptr, name).unwrap()
             }
             Expr::Binary { op, lhs, rhs } => {
                 let l = lhs.codegen(ctx);

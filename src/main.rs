@@ -55,6 +55,102 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_variable_load() {
+        let context = Context::create();
+        let mut codegen_ctx = CodegenContext::new(&context, "test_module");
+
+        let program = Program {
+            items: vec![
+                Item::Function(ItemFunction {
+                    name: "test_var".to_string(),
+                    params: vec![
+                        FunctionParam {
+                            name: "x".to_string(),
+                            ty: Type::Int,
+                        },
+                    ],
+                    return_type: Some(Type::Int),
+                    body: Block {
+                        statements: vec![
+                            // Just load and return x
+                            Stmt::Expr(Expr::VarRef("x".to_string())),
+                        ],
+                    },
+                }),
+            ],
+        };
+
+        program.codegen(&mut codegen_ctx);
+        let ir = codegen_ctx.module.print_to_string().to_string();
+        println!("Generated IR:\n{}", ir);
+        
+        // Basic verification
+        assert!(ir.contains("define i64 @test_var(i64"));
+        assert!(ir.contains("load i64, ptr %x"));
+    }
+
+    #[test]
+    fn test_simple_arithmetic() {
+        let context = Context::create();
+        let mut codegen_ctx = CodegenContext::new(&context, "test_module");
+
+        let program = Program {
+            items: vec![
+                Item::Function(ItemFunction {
+                    name: "add_const".to_string(),
+                    params: vec![
+                        FunctionParam {
+                            name: "x".to_string(),
+                            ty: Type::Int,
+                        },
+                    ],
+                    return_type: Some(Type::Int),
+                    body: Block {
+                        statements: vec![
+                            // Just add x + 1
+                            Stmt::Expr(Expr::Binary {
+                                op: BinOp::Add,
+                                lhs: Box::new(Expr::VarRef("x".to_string())),
+                                rhs: Box::new(Expr::Literal(Literal::Int(1))),
+                            }),
+                        ],
+                    },
+                }),
+            ],
+        };
+
+        program.codegen(&mut codegen_ctx);
+        let ir = codegen_ctx.module.print_to_string().to_string();
+        println!("Generated IR:\n{}", ir);
+        
+        // Basic verification
+        assert!(ir.contains("define i64 @add_const(i64"));
+        assert!(ir.contains("add i64"));
+    }
+
+    #[test]
+    fn test_empty_struct() {
+        let context = Context::create();
+        let mut codegen_ctx = CodegenContext::new(&context, "test_module");
+
+        let program = Program {
+            items: vec![
+                Item::Struct(ItemStruct {
+                    name: "Empty".to_string(),
+                    fields: vec![],
+                }),
+            ],
+        };
+
+        program.codegen(&mut codegen_ctx);
+        let ir = codegen_ctx.module.print_to_string().to_string();
+        println!("Generated IR:\n{}", ir);
+        
+        // Basic verification
+        assert!(ir.contains("%Empty = type {}"));
+    }
+
+    #[test]
     fn test_simple_function() {
         let context = Context::create();
         let mut codegen_ctx = CodegenContext::new(&context, "test_module");
