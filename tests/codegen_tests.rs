@@ -14,37 +14,33 @@ fn test_simple_function() {
     let mut codegen_ctx = create_test_context(&context);
 
     let program = Program {
-        items: vec![
-            Item::Function(ItemFunction {
-                name: "add42".to_string(),
-                params: vec![
-                    FunctionParam {
-                        name: "x".to_string(),
-                        ty: Type::Int,
+        items: vec![Item::Function(ItemFunction {
+            name: "add42".to_string(),
+            params: vec![FunctionParam {
+                name: "x".to_string(),
+                ty: Type::Int,
+            }],
+            return_type: Some(Type::Int),
+            body: Block {
+                statements: vec![
+                    Stmt::Let {
+                        name: "result".to_string(),
+                        ty: Some(Type::Int),
+                        value: Some(Expr::Binary {
+                            op: BinOp::Add,
+                            lhs: Box::new(Expr::VarRef("x".to_string())),
+                            rhs: Box::new(Expr::Literal(Literal::Int(42))),
+                        }),
                     },
+                    Stmt::Return(Some(Expr::VarRef("result".to_string()))),
                 ],
-                return_type: Some(Type::Int),
-                body: Block {
-                    statements: vec![
-                        Stmt::Let {
-                            name: "result".to_string(),
-                            ty: Some(Type::Int),
-                            value: Some(Expr::Binary {
-                                op: BinOp::Add,
-                                lhs: Box::new(Expr::VarRef("x".to_string())),
-                                rhs: Box::new(Expr::Literal(Literal::Int(42))),
-                            }),
-                        },
-                        Stmt::Return(Some(Expr::VarRef("result".to_string()))),
-                    ],
-                },
-            }),
-        ],
+            },
+        })],
     };
 
     program.codegen(&mut codegen_ctx);
     let ir = codegen_ctx.module.print_to_string().to_string();
-    
+
     // Basic verification
     assert!(ir.contains("define i64 @add42(i64"));
     assert!(ir.contains("add i64"));
@@ -57,44 +53,34 @@ fn test_if_expression() {
     let mut codegen_ctx = create_test_context(&context);
 
     let program = Program {
-        items: vec![
-            Item::Function(ItemFunction {
-                name: "test_if".to_string(),
-                params: vec![
-                    FunctionParam {
-                        name: "x".to_string(),
-                        ty: Type::Int,
+        items: vec![Item::Function(ItemFunction {
+            name: "test_if".to_string(),
+            params: vec![FunctionParam {
+                name: "x".to_string(),
+                ty: Type::Int,
+            }],
+            return_type: Some(Type::Int),
+            body: Block {
+                statements: vec![Stmt::Return(Some(Expr::If {
+                    condition: Box::new(Expr::Binary {
+                        op: BinOp::Eq,
+                        lhs: Box::new(Expr::VarRef("x".to_string())),
+                        rhs: Box::new(Expr::Literal(Literal::Int(0))),
+                    }),
+                    then_branch: Block {
+                        statements: vec![Stmt::Expr(Expr::Literal(Literal::Int(42)))],
                     },
-                ],
-                return_type: Some(Type::Int),
-                body: Block {
-                    statements: vec![
-                        Stmt::Return(Some(Expr::If {
-                            condition: Box::new(Expr::Binary {
-                                op: BinOp::Eq,
-                                lhs: Box::new(Expr::VarRef("x".to_string())),
-                                rhs: Box::new(Expr::Literal(Literal::Int(0))),
-                            }),
-                            then_branch: Block {
-                                statements: vec![
-                                    Stmt::Expr(Expr::Literal(Literal::Int(42))),
-                                ],
-                            },
-                            else_branch: Some(Block {
-                                statements: vec![
-                                    Stmt::Expr(Expr::Literal(Literal::Int(24))),
-                                ],
-                            }),
-                        })),
-                    ],
-                },
-            }),
-        ],
+                    else_branch: Some(Block {
+                        statements: vec![Stmt::Expr(Expr::Literal(Literal::Int(24)))],
+                    }),
+                }))],
+            },
+        })],
     };
 
     program.codegen(&mut codegen_ctx);
     let ir = codegen_ctx.module.print_to_string().to_string();
-    
+
     // Basic verification
     assert!(ir.contains("define i64 @test_if(i64"));
     assert!(ir.contains("icmp eq"));
@@ -148,7 +134,7 @@ fn test_struct_definition() {
     program.codegen(&mut codegen_ctx);
     let ir = codegen_ctx.module.print_to_string().to_string();
     println!("Generated IR:\n{}", ir);
-    
+
     // Basic verification - more flexible with parameter names
     assert!(ir.contains("%Point = type { i64, i64 }"));
     assert!(ir.contains("define %Point @make_point(i64"));
@@ -161,67 +147,63 @@ fn test_while_loop() {
     let mut codegen_ctx = create_test_context(&context);
 
     let program = Program {
-        items: vec![
-            Item::Function(ItemFunction {
-                name: "sum_to".to_string(),
-                params: vec![
-                    FunctionParam {
-                        name: "n".to_string(),
-                        ty: Type::Int,
+        items: vec![Item::Function(ItemFunction {
+            name: "sum_to".to_string(),
+            params: vec![FunctionParam {
+                name: "n".to_string(),
+                ty: Type::Int,
+            }],
+            return_type: Some(Type::Int),
+            body: Block {
+                statements: vec![
+                    Stmt::Let {
+                        name: "sum".to_string(),
+                        ty: Some(Type::Int),
+                        value: Some(Expr::Literal(Literal::Int(0))),
                     },
+                    Stmt::Let {
+                        name: "i".to_string(),
+                        ty: Some(Type::Int),
+                        value: Some(Expr::Literal(Literal::Int(0))),
+                    },
+                    Stmt::While {
+                        condition: Expr::Binary {
+                            op: BinOp::Lt,
+                            lhs: Box::new(Expr::VarRef("i".to_string())),
+                            rhs: Box::new(Expr::VarRef("n".to_string())),
+                        },
+                        body: Block {
+                            statements: vec![
+                                Stmt::Let {
+                                    name: "sum".to_string(),
+                                    ty: Some(Type::Int),
+                                    value: Some(Expr::Binary {
+                                        op: BinOp::Add,
+                                        lhs: Box::new(Expr::VarRef("sum".to_string())),
+                                        rhs: Box::new(Expr::VarRef("i".to_string())),
+                                    }),
+                                },
+                                Stmt::Let {
+                                    name: "i".to_string(),
+                                    ty: Some(Type::Int),
+                                    value: Some(Expr::Binary {
+                                        op: BinOp::Add,
+                                        lhs: Box::new(Expr::VarRef("i".to_string())),
+                                        rhs: Box::new(Expr::Literal(Literal::Int(1))),
+                                    }),
+                                },
+                            ],
+                        },
+                    },
+                    Stmt::Return(Some(Expr::VarRef("sum".to_string()))),
                 ],
-                return_type: Some(Type::Int),
-                body: Block {
-                    statements: vec![
-                        Stmt::Let {
-                            name: "sum".to_string(),
-                            ty: Some(Type::Int),
-                            value: Some(Expr::Literal(Literal::Int(0))),
-                        },
-                        Stmt::Let {
-                            name: "i".to_string(),
-                            ty: Some(Type::Int),
-                            value: Some(Expr::Literal(Literal::Int(0))),
-                        },
-                        Stmt::While {
-                            condition: Expr::Binary {
-                                op: BinOp::Lt,
-                                lhs: Box::new(Expr::VarRef("i".to_string())),
-                                rhs: Box::new(Expr::VarRef("n".to_string())),
-                            },
-                            body: Block {
-                                statements: vec![
-                                    Stmt::Let {
-                                        name: "sum".to_string(),
-                                        ty: Some(Type::Int),
-                                        value: Some(Expr::Binary {
-                                            op: BinOp::Add,
-                                            lhs: Box::new(Expr::VarRef("sum".to_string())),
-                                            rhs: Box::new(Expr::VarRef("i".to_string())),
-                                        }),
-                                    },
-                                    Stmt::Let {
-                                        name: "i".to_string(),
-                                        ty: Some(Type::Int),
-                                        value: Some(Expr::Binary {
-                                            op: BinOp::Add,
-                                            lhs: Box::new(Expr::VarRef("i".to_string())),
-                                            rhs: Box::new(Expr::Literal(Literal::Int(1))),
-                                        }),
-                                    },
-                                ],
-                            },
-                        },
-                        Stmt::Return(Some(Expr::VarRef("sum".to_string()))),
-                    ],
-                },
-            }),
-        ],
+            },
+        })],
     };
 
     program.codegen(&mut codegen_ctx);
     let ir = codegen_ctx.module.print_to_string().to_string();
-    
+
     // Basic verification
     assert!(ir.contains("define i64 @sum_to(i64"));
     assert!(ir.contains("while.cond:"));
@@ -237,39 +219,216 @@ fn test_float_operations() {
     let mut codegen_ctx = create_test_context(&context);
 
     let program = Program {
+        items: vec![Item::Function(ItemFunction {
+            name: "add_float".to_string(),
+            params: vec![
+                FunctionParam {
+                    name: "x".to_string(),
+                    ty: Type::Float,
+                },
+                FunctionParam {
+                    name: "y".to_string(),
+                    ty: Type::Float,
+                },
+            ],
+            return_type: Some(Type::Float),
+            body: Block {
+                statements: vec![Stmt::Return(Some(Expr::Binary {
+                    op: BinOp::Add,
+                    lhs: Box::new(Expr::VarRef("x".to_string())),
+                    rhs: Box::new(Expr::VarRef("y".to_string())),
+                }))],
+            },
+        })],
+    };
+
+    program.codegen(&mut codegen_ctx);
+    let ir = codegen_ctx.module.print_to_string().to_string();
+    println!("Generated IR:\n{}", ir);
+
+    // Basic verification - more flexible with parameter names
+    assert!(ir.contains("define double @add_float(double"));
+    assert!(ir.contains(", double"));
+    assert!(ir.contains("fadd double"));
+}
+
+fn verify_ir(ir: &str, expected_patterns: &[&str]) {
+    println!("Generated IR:\n{}", ir);
+    for pattern in expected_patterns {
+        assert!(ir.contains(pattern), "Expected IR to contain: {}", pattern);
+    }
+}
+
+#[test]
+fn test_variable_load() {
+    let context = Context::create();
+    let mut codegen_ctx = CodegenContext::new(&context, "test_module");
+
+    let program = Program {
+        items: vec![Item::Function(ItemFunction {
+            name: "test_var".to_string(),
+            params: vec![FunctionParam {
+                name: "x".to_string(),
+                ty: Type::Int,
+            }],
+            return_type: Some(Type::Int),
+            body: Block {
+                statements: vec![Stmt::Expr(Expr::VarRef("x".to_string()))],
+            },
+        })],
+    };
+
+    program.codegen(&mut codegen_ctx);
+    let ir = codegen_ctx.module.print_to_string().to_string();
+    verify_ir(&ir, &["define i64 @test_var(i64", "load i64, ptr %x"]);
+}
+
+#[test]
+fn test_nested_struct() {
+    let context = Context::create();
+    let mut codegen_ctx = CodegenContext::new(&context, "test_module");
+
+    let program = Program {
         items: vec![
-            Item::Function(ItemFunction {
-                name: "add_float".to_string(),
-                params: vec![
-                    FunctionParam {
+            Item::Struct(ItemStruct {
+                name: "Point".to_string(),
+                fields: vec![
+                    StructField {
                         name: "x".to_string(),
-                        ty: Type::Float,
+                        ty: Type::Int,
                     },
-                    FunctionParam {
+                    StructField {
                         name: "y".to_string(),
-                        ty: Type::Float,
+                        ty: Type::Int,
                     },
                 ],
-                return_type: Some(Type::Float),
-                body: Block {
-                    statements: vec![
-                        Stmt::Return(Some(Expr::Binary {
-                            op: BinOp::Add,
-                            lhs: Box::new(Expr::VarRef("x".to_string())),
-                            rhs: Box::new(Expr::VarRef("y".to_string())),
-                        })),
-                    ],
-                },
+            }),
+            Item::Struct(ItemStruct {
+                name: "Rectangle".to_string(),
+                fields: vec![
+                    StructField {
+                        name: "top_left".to_string(),
+                        ty: Type::Struct("Point".to_string()),
+                    },
+                    StructField {
+                        name: "bottom_right".to_string(),
+                        ty: Type::Struct("Point".to_string()),
+                    },
+                ],
+            }),
+            Item::Function(ItemFunction {
+                name: "create_rect".to_string(),
+                params: vec![],
+                return_type: Some(Type::Struct("Rectangle".to_string())),
+                body: Block { statements: vec![] },
             }),
         ],
     };
 
     program.codegen(&mut codegen_ctx);
     let ir = codegen_ctx.module.print_to_string().to_string();
-    println!("Generated IR:\n{}", ir);
-    
-    // Basic verification - more flexible with parameter names
-    assert!(ir.contains("define double @add_float(double"));
-    assert!(ir.contains(", double"));
-    assert!(ir.contains("fadd double"));
-} 
+    verify_ir(
+        &ir,
+        &[
+            "%Point = type { i64, i64 }",
+            "%Rectangle = type { %Point, %Point }",
+            "define %Rectangle @create_rect()",
+        ],
+    );
+}
+
+#[test]
+fn test_array_type() {
+    let context = Context::create();
+    let mut codegen_ctx = CodegenContext::new(&context, "test_module");
+
+    let program = Program {
+        items: vec![
+            Item::Struct(ItemStruct {
+                name: "IntArray".to_string(),
+                fields: vec![StructField {
+                    name: "data".to_string(),
+                    ty: Type::Array(Box::new(Type::Int)),
+                }],
+            }),
+            Item::Function(ItemFunction {
+                name: "create_array".to_string(),
+                params: vec![],
+                return_type: Some(Type::Struct("IntArray".to_string())),
+                body: Block { statements: vec![] },
+            }),
+        ],
+    };
+
+    program.codegen(&mut codegen_ctx);
+    let ir = codegen_ctx.module.print_to_string().to_string();
+    verify_ir(
+        &ir,
+        &[
+            "%IntArray = type { [0 x i64] }",
+            "define %IntArray @create_array()",
+        ],
+    );
+}
+
+#[test]
+fn test_function_types() {
+    let context = Context::create();
+    let mut codegen_ctx = CodegenContext::new(&context, "test_module");
+
+    let program = Program {
+        items: vec![
+            Item::Struct(ItemStruct {
+                name: "Callback".to_string(),
+                fields: vec![StructField {
+                    name: "func".to_string(),
+                    ty: Type::Function {
+                        params: vec![Type::Int],
+                        return_type: Box::new(Type::Int),
+                    },
+                }],
+            }),
+            Item::Function(ItemFunction {
+                name: "create_callback".to_string(),
+                params: vec![],
+                return_type: Some(Type::Struct("Callback".to_string())),
+                body: Block { statements: vec![] },
+            }),
+        ],
+    };
+
+    program.codegen(&mut codegen_ctx);
+    let ir = codegen_ctx.module.print_to_string().to_string();
+    verify_ir(
+        &ir,
+        &[
+            "%Callback = type { ptr }",
+            "define %Callback @create_callback()",
+        ],
+    );
+}
+
+#[test]
+fn test_empty_struct() {
+    let context = Context::create();
+    let mut codegen_ctx = CodegenContext::new(&context, "test_module");
+
+    let program = Program {
+        items: vec![
+            Item::Struct(ItemStruct {
+                name: "Empty".to_string(),
+                fields: vec![],
+            }),
+            Item::Function(ItemFunction {
+                name: "create_empty".to_string(),
+                params: vec![],
+                return_type: Some(Type::Struct("Empty".to_string())),
+                body: Block { statements: vec![] },
+            }),
+        ],
+    };
+
+    program.codegen(&mut codegen_ctx);
+    let ir = codegen_ctx.module.print_to_string().to_string();
+    verify_ir(&ir, &["%Empty = type {}", "define %Empty @create_empty()"]);
+}
