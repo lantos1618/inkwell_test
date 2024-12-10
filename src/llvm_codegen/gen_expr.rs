@@ -284,21 +284,47 @@ impl<'ctx> Codegen<'ctx> for Expr {
                 let parent = ctx.builder.get_insert_block().unwrap().get_parent().unwrap();
                 let merge_block = ctx.context.append_basic_block(parent, "match.end");
                 
-                // Create blocks for each arm
+                // Create blocks for each arm, excluding wildcard pattern
                 let mut arm_blocks: Vec<(Pattern, BasicBlock)> = arms.iter()
+                    .filter(|arm| !matches!(arm.pattern, Pattern::Wildcard))
                     .map(|arm| {
                         let block = ctx.context.append_basic_block(parent, "match.arm");
                         (arm.pattern.clone(), block)
                     })
                     .collect();
                 
-                // Add default block if there's a wildcard pattern
-                let default_block = if arms.iter().any(|arm| matches!(arm.pattern, Pattern::Wildcard)) {
-                    arm_blocks.iter().find(|(pat, _)| matches!(pat, Pattern::Wildcard))
-                        .map(|(_, block)| *block)
+                // Store values from all arms
+                let mut arm_values = Vec::new();
+                
+                // Create default block for wildcard pattern
+                let default_block = if let Some(wildcard_arm) = arms.iter().find(|arm| matches!(arm.pattern, Pattern::Wildcard)) {
+                    let block = ctx.context.append_basic_block(parent, "default");
+                    ctx.builder.position_at_end(block);
+                    
+                    // Generate wildcard arm body
+                    let mut last_value = None;
+                    for stmt in &wildcard_arm.body.statements {
+                        if let crate::ast::Stmt::Expr(e) = stmt {
+                            last_value = Some(e.codegen(ctx));
+                        }
+                    }
+                    
+                    let value = last_value.unwrap_or_else(|| {
+                        ctx.context.i64_type().const_zero().into()
+                    });
+                    
+                    let alloca = ctx.builder.build_alloca(ctx.context.i64_type(), "match_value").unwrap();
+                    ctx.builder.build_store(alloca, value).unwrap();
+                    arm_values.push((alloca, block));
+                    
+                    ctx.builder.build_unconditional_branch(merge_block).unwrap();
+                    Some(block)
                 } else {
                     // If no wildcard pattern, create unreachable block
-                    Some(ctx.context.append_basic_block(parent, "match.unreachable"))
+                    let block = ctx.context.append_basic_block(parent, "default");
+                    ctx.builder.position_at_end(block);
+                    ctx.builder.build_unreachable().unwrap();
+                    Some(block)
                 };
 
                 // Build switch instruction
@@ -328,9 +354,10 @@ impl<'ctx> Codegen<'ctx> for Expr {
                     cases.as_slice(),
                 ).unwrap();
 
-                // Generate code for each arm
-                let mut arm_values = Vec::new();
-                for (i, arm) in arms.iter().enumerate() {
+                // Generate code for each non-wildcard arm
+                for (i, arm) in arms.iter()
+                    .filter(|arm| !matches!(arm.pattern, Pattern::Wildcard))
+                    .enumerate() {
                     let block = arm_blocks[i].1;
                     ctx.builder.position_at_end(block);
                     
@@ -346,8 +373,7 @@ impl<'ctx> Codegen<'ctx> for Expr {
                         ctx.context.i64_type().const_zero().into()
                     });
                     
-                    // Store the value in an alloca to ensure it lives long enough
-                    let alloca = ctx.builder.build_alloca(value.get_type(), "match_value").unwrap();
+                    let alloca = ctx.builder.build_alloca(ctx.context.i64_type(), "match_value").unwrap();
                     ctx.builder.build_store(alloca, value).unwrap();
                     arm_values.push((alloca, block));
                     
@@ -358,16 +384,12 @@ impl<'ctx> Codegen<'ctx> for Expr {
                 // Generate merge block with phi node
                 ctx.builder.position_at_end(merge_block);
                 
-                // Get the type from the first arm's value
-                let first_alloca = arm_values.first().unwrap().0;
-                let value_type = first_alloca.get_type();
-                
-                let phi = ctx.builder.build_phi(value_type, "match.result").unwrap();
+                let phi = ctx.builder.build_phi(ctx.context.i64_type(), "match.result").unwrap();
                 
                 // Load values from allocas and add to phi node
                 let phi_values: Vec<_> = arm_values.iter()
                     .map(|(alloca, block)| {
-                        let loaded = ctx.builder.build_load(alloca.get_type(), *alloca, "match_value").unwrap();
+                        let loaded = ctx.builder.build_load(ctx.context.i64_type(), *alloca, "match_value").unwrap();
                         (loaded as BasicValueEnum<'ctx>, *block)
                     })
                     .collect();
