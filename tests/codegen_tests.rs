@@ -432,3 +432,212 @@ fn test_empty_struct() {
     let ir = codegen_ctx.module.print_to_string().to_string();
     verify_ir(&ir, &["%Empty = type {}", "define %Empty @create_empty()"]);
 }
+
+#[test]
+fn test_nested_scopes() {
+    let context = Context::create();
+    let mut codegen_ctx = create_test_context(&context);
+
+    let program = Program {
+        items: vec![
+            Item::Function(ItemFunction {
+                name: "test_scopes".to_string(),
+                params: vec![],
+                return_type: Some(Type::Int),
+                body: Block {
+                    statements: vec![
+                        Stmt::Let {
+                            name: "x".to_string(),
+                            ty: Some(Type::Int),
+                            value: Some(Expr::Literal(Literal::Int(1))),
+                        },
+                        Stmt::Let {
+                            name: "y".to_string(),
+                            ty: Some(Type::Int),
+                            value: Some(Expr::Literal(Literal::Int(2))),
+                        },
+                        Stmt::Expr(Expr::If {
+                            condition: Box::new(Expr::Literal(Literal::Bool(true))),
+                            then_branch: Block {
+                                statements: vec![
+                                    Stmt::Let {
+                                        name: "x".to_string(),  // Shadows outer x
+                                        ty: Some(Type::Int),
+                                        value: Some(Expr::Literal(Literal::Int(3))),
+                                    },
+                                ],
+                            },
+                            else_branch: Some(Block {
+                                statements: vec![],
+                            }),
+                        }),
+                        Stmt::Return(Some(Expr::VarRef("x".to_string()))),  // Should refer to outer x
+                    ],
+                },
+            }),
+        ],
+    };
+
+    program.codegen(&mut codegen_ctx);
+    let ir = codegen_ctx.module.print_to_string().to_string();
+    println!("Generated IR:\n{}", ir);
+    
+    assert!(ir.contains("define i64 @test_scopes()"));
+    assert!(ir.contains("alloca i64")); // Variable allocations
+    assert!(ir.contains("store i64 1")); // Initial x value
+    assert!(ir.contains("store i64 3")); // Inner x value
+}
+
+#[test]
+fn test_string_literals() {
+    let context = Context::create();
+    let mut codegen_ctx = create_test_context(&context);
+
+    let program = Program {
+        items: vec![
+            Item::Function(ItemFunction {
+                name: "test_strings".to_string(),
+                params: vec![],
+                return_type: Some(Type::String),
+                body: Block {
+                    statements: vec![
+                        Stmt::Return(Some(Expr::Literal(Literal::String("Hello, World!".to_string())))),
+                    ],
+                },
+            }),
+        ],
+    };
+
+    program.codegen(&mut codegen_ctx);
+    let ir = codegen_ctx.module.print_to_string().to_string();
+    println!("Generated IR:\n{}", ir);
+    
+    // More flexible string constant check
+    assert!(ir.contains("@str = global [14 x i8] c\"Hello, World!\\00\"")); // String constant
+    assert!(ir.contains("define ptr @test_strings()")); // Function returning string (pointer)
+}
+
+#[test]
+fn test_struct_field_access() {
+    let context = Context::create();
+    let mut codegen_ctx = create_test_context(&context);
+
+    let program = Program {
+        items: vec![
+            Item::Struct(ItemStruct {
+                name: "Person".to_string(),
+                fields: vec![
+                    StructField {
+                        name: "age".to_string(),
+                        ty: Type::Int,
+                    },
+                    StructField {
+                        name: "height".to_string(),
+                        ty: Type::Float,
+                    },
+                ],
+            }),
+            Item::Function(ItemFunction {
+                name: "get_age".to_string(),
+                params: vec![
+                    FunctionParam {
+                        name: "person".to_string(),
+                        ty: Type::Struct("Person".to_string()),
+                    },
+                ],
+                return_type: Some(Type::Int),
+                body: Block {
+                    statements: vec![
+                        // For now, just return a constant since field access isn't implemented
+                        Stmt::Return(Some(Expr::Literal(Literal::Int(0)))),
+                    ],
+                },
+            }),
+        ],
+    };
+
+    program.codegen(&mut codegen_ctx);
+    let ir = codegen_ctx.module.print_to_string().to_string();
+    println!("Generated IR:\n{}", ir);
+    
+    // Check struct type and function signature
+    assert!(ir.contains("%Person = type { i64, double }")); // Struct definition
+    assert!(ir.contains("define i64 @get_age(%Person %person)")); // Function signature
+}
+
+#[test]
+fn test_array_operations() {
+    let context = Context::create();
+    let mut codegen_ctx = create_test_context(&context);
+
+    let program = Program {
+        items: vec![
+            Item::Function(ItemFunction {
+                name: "sum_array".to_string(),
+                params: vec![
+                    FunctionParam {
+                        name: "arr".to_string(),
+                        ty: Type::Array(Box::new(Type::Int)),
+                    },
+                    FunctionParam {
+                        name: "len".to_string(),
+                        ty: Type::Int,
+                    },
+                ],
+                return_type: Some(Type::Int),
+                body: Block {
+                    statements: vec![
+                        Stmt::Let {
+                            name: "sum".to_string(),
+                            ty: Some(Type::Int),
+                            value: Some(Expr::Literal(Literal::Int(0))),
+                        },
+                        Stmt::Return(Some(Expr::VarRef("sum".to_string()))),
+                    ],
+                },
+            }),
+        ],
+    };
+
+    program.codegen(&mut codegen_ctx);
+    let ir = codegen_ctx.module.print_to_string().to_string();
+    println!("Generated IR:\n{}", ir);
+    
+    // More flexible array parameter check
+    assert!(ir.contains("define i64 @sum_array([0 x i64]")); // Array parameter
+    assert!(ir.contains(", i64")); // Length parameter
+}
+
+#[test]
+fn test_optional_types() {
+    let context = Context::create();
+    let mut codegen_ctx = create_test_context(&context);
+
+    let program = Program {
+        items: vec![
+            Item::Function(ItemFunction {
+                name: "maybe_add_one".to_string(),
+                params: vec![
+                    FunctionParam {
+                        name: "x".to_string(),
+                        ty: Type::Optional(Box::new(Type::Int)),
+                    },
+                ],
+                return_type: Some(Type::Optional(Box::new(Type::Int))),
+                body: Block {
+                    statements: vec![
+                        Stmt::Return(Some(Expr::VarRef("x".to_string()))),
+                    ],
+                },
+            }),
+        ],
+    };
+
+    program.codegen(&mut codegen_ctx);
+    let ir = codegen_ctx.module.print_to_string().to_string();
+    println!("Generated IR:\n{}", ir);
+    
+    // Check for optional type structure
+    assert!(ir.contains("define { i64, i1 } @maybe_add_one")); // Function signature
+    assert!(ir.contains("alloca { i64, i1 }")); // Local variable allocation
+}
