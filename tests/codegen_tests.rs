@@ -641,3 +641,76 @@ fn test_optional_types() {
     assert!(ir.contains("define { i64, i1 } @maybe_add_one")); // Function signature
     assert!(ir.contains("alloca { i64, i1 }")); // Local variable allocation
 }
+
+#[test]
+fn test_match_expression() {
+    let context = Context::create();
+    let mut codegen_ctx = create_test_context(&context);
+
+    let program = Program {
+        items: vec![
+            Item::Function(ItemFunction {
+                name: "test_match".to_string(),
+                params: vec![
+                    FunctionParam {
+                        name: "x".to_string(),
+                        ty: AstType::Int,
+                    },
+                ],
+                return_type: Some(AstType::Int),
+                body: Block {
+                    statements: vec![
+                        Stmt::Return(Some(Expr::Match {
+                            expr: Box::new(Expr::VarRef("x".to_string())),
+                            arms: vec![
+                                MatchArm {
+                                    pattern: Pattern::Literal(Literal::Int(0)),
+                                    guard: None,
+                                    body: Block {
+                                        statements: vec![
+                                            Stmt::Expr(Expr::Literal(Literal::Int(42))),
+                                        ],
+                                    },
+                                },
+                                MatchArm {
+                                    pattern: Pattern::Range {
+                                        start: Box::new(Literal::Int(1)),
+                                        end: Box::new(Literal::Int(10)),
+                                        inclusive: true,
+                                    },
+                                    guard: None,
+                                    body: Block {
+                                        statements: vec![
+                                            Stmt::Expr(Expr::Literal(Literal::Int(24))),
+                                        ],
+                                    },
+                                },
+                                MatchArm {
+                                    pattern: Pattern::Wildcard,
+                                    guard: None,
+                                    body: Block {
+                                        statements: vec![
+                                            Stmt::Expr(Expr::Literal(Literal::Int(0))),
+                                        ],
+                                    },
+                                },
+                            ],
+                        })),
+                    ],
+                },
+            }),
+        ],
+    };
+
+    program.codegen(&mut codegen_ctx);
+    let ir = codegen_ctx.module.print_to_string().to_string();
+    println!("Generated IR:\n{}", ir);
+    
+    // Check for match-related IR patterns
+    assert!(ir.contains("define i64 @test_match(i64 %x)")); // Function signature
+    assert!(ir.contains("switch i64")); // Switch instruction for match
+    assert!(ir.contains("i64 0")); // Literal pattern
+    assert!(ir.contains("i64 42")); // Return value for first arm
+    assert!(ir.contains("i64 24")); // Return value for second arm
+    assert!(ir.contains("default:")); // Default case for wildcard pattern
+}

@@ -117,6 +117,43 @@ pub enum Expr {
     },
     /// Array literal
     Array(Vec<Expr>),
+    /// Match expression
+    Match {
+        expr: Box<Expr>,
+        arms: Vec<MatchArm>,
+    },
+}
+
+/// A match arm in a match expression
+#[derive(Debug, Clone)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub guard: Option<Box<Expr>>,
+    pub body: Block,
+}
+
+/// A pattern in a match arm
+#[derive(Debug, Clone)]
+pub enum Pattern {
+    /// Literal pattern (e.g., 42, true)
+    Literal(Literal),
+    /// Variable binding pattern (e.g., x)
+    Binding(String),
+    /// Wildcard pattern (_)
+    Wildcard,
+    /// Constructor pattern (e.g., Some(x))
+    Constructor {
+        name: String,
+        args: Vec<Pattern>,
+    },
+    /// Or pattern (e.g., 1 | 2)
+    Or(Vec<Pattern>),
+    /// Range pattern (e.g., 1..=5)
+    Range {
+        start: Box<Literal>,
+        end: Box<Literal>,
+        inclusive: bool,
+    },
 }
 
 /// Literal values

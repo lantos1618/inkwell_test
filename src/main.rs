@@ -19,15 +19,15 @@ fn main() -> Result<()> {
                 params: vec![
                     FunctionParam {
                         name: "x".to_string(),
-                        ty: Type::Int,
+                        ty: AstType::Int,
                     },
                 ],
-                return_type: Some(Type::Int),
+                return_type: Some(AstType::Int),
                 body: Block {
                     statements: vec![
                         Stmt::Let {
                             name: "y".to_string(),
-                            ty: Some(Type::Int),
+                            ty: Some(AstType::Int),
                             value: Some(Expr::Binary {
                                 op: BinOp::Add,
                                 lhs: Box::new(Expr::VarRef("x".to_string())),

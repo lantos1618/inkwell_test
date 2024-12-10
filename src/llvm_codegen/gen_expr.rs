@@ -1,10 +1,11 @@
 use super::{Codegen, CodegenContext};
-use crate::ast::{Expr, Literal, BinOp, UnaryOp, Block, Stmt, AstType};
+use crate::ast::{Expr, Literal, BinOp, UnaryOp, Block, Stmt, Pattern};
 use inkwell::{
-    values::{BasicValue, BasicValueEnum, IntValue, FloatValue, BasicMetadataValueEnum, PointerValue},
-    types::{BasicType, AnyTypeEnum, AsTypeRef},
+    values::{BasicValue, BasicValueEnum, IntValue, BasicMetadataValueEnum},
+    types::BasicType,
     IntPredicate,
     FloatPredicate,
+    basic_block::BasicBlock,
 };
 
 impl<'ctx> Codegen<'ctx> for Block {
@@ -275,6 +276,108 @@ impl<'ctx> Codegen<'ctx> for Expr {
                     ctx.builder.build_store(elem_ptr, elem_val).unwrap();
                 }
                 alloc.as_basic_value_enum()
+            }
+            Expr::Match { expr, arms } => {
+                let match_val = expr.codegen(ctx);
+                let match_val = match_val.into_int_value(); // For now, only support integer matching
+                
+                let parent = ctx.builder.get_insert_block().unwrap().get_parent().unwrap();
+                let merge_block = ctx.context.append_basic_block(parent, "match.end");
+                
+                // Create blocks for each arm
+                let mut arm_blocks: Vec<(Pattern, BasicBlock)> = arms.iter()
+                    .map(|arm| {
+                        let block = ctx.context.append_basic_block(parent, "match.arm");
+                        (arm.pattern.clone(), block)
+                    })
+                    .collect();
+                
+                // Add default block if there's a wildcard pattern
+                let default_block = if arms.iter().any(|arm| matches!(arm.pattern, Pattern::Wildcard)) {
+                    arm_blocks.iter().find(|(pat, _)| matches!(pat, Pattern::Wildcard))
+                        .map(|(_, block)| *block)
+                } else {
+                    // If no wildcard pattern, create unreachable block
+                    Some(ctx.context.append_basic_block(parent, "match.unreachable"))
+                };
+
+                // Build switch instruction
+                let mut cases: Vec<(IntValue<'ctx>, BasicBlock<'ctx>)> = Vec::new();
+                for (pattern, block) in &arm_blocks {
+                    match pattern {
+                        Pattern::Literal(Literal::Int(i)) => {
+                            let const_val = ctx.context.i64_type().const_int(*i as u64, true);
+                            cases.push((const_val, *block));
+                        }
+                        Pattern::Range { start, end, inclusive } => {
+                            if let (Literal::Int(start_val), Literal::Int(end_val)) = (&**start, &**end) {
+                                let end_val = if *inclusive { *end_val } else { end_val - 1 };
+                                for i in *start_val..=end_val {
+                                    let const_val = ctx.context.i64_type().const_int(i as u64, true);
+                                    cases.push((const_val, *block));
+                                }
+                            }
+                        }
+                        _ => {} // Other patterns handled differently
+                    }
+                }
+                
+                ctx.builder.build_switch(
+                    match_val,
+                    default_block.unwrap(),
+                    cases.as_slice(),
+                ).unwrap();
+
+                // Generate code for each arm
+                let mut arm_values = Vec::new();
+                for (i, arm) in arms.iter().enumerate() {
+                    let block = arm_blocks[i].1;
+                    ctx.builder.position_at_end(block);
+                    
+                    // Generate arm body
+                    let mut last_value = None;
+                    for stmt in &arm.body.statements {
+                        if let crate::ast::Stmt::Expr(e) = stmt {
+                            last_value = Some(e.codegen(ctx));
+                        }
+                    }
+                    
+                    let value = last_value.unwrap_or_else(|| {
+                        ctx.context.i64_type().const_zero().into()
+                    });
+                    
+                    // Store the value in an alloca to ensure it lives long enough
+                    let alloca = ctx.builder.build_alloca(value.get_type(), "match_value").unwrap();
+                    ctx.builder.build_store(alloca, value).unwrap();
+                    arm_values.push((alloca, block));
+                    
+                    // Branch to merge block
+                    ctx.builder.build_unconditional_branch(merge_block).unwrap();
+                }
+
+                // Generate merge block with phi node
+                ctx.builder.position_at_end(merge_block);
+                
+                // Get the type from the first arm's value
+                let first_alloca = arm_values.first().unwrap().0;
+                let value_type = first_alloca.get_type();
+                
+                let phi = ctx.builder.build_phi(value_type, "match.result").unwrap();
+                
+                // Load values from allocas and add to phi node
+                let phi_values: Vec<_> = arm_values.iter()
+                    .map(|(alloca, block)| {
+                        let loaded = ctx.builder.build_load(alloca.get_type(), *alloca, "match_value").unwrap();
+                        (loaded as BasicValueEnum<'ctx>, *block)
+                    })
+                    .collect();
+                
+                let phi_refs: Vec<_> = phi_values.iter()
+                    .map(|(val, block)| (val as &dyn BasicValue, *block))
+                    .collect();
+                phi.add_incoming(phi_refs.as_slice());
+                
+                phi.as_basic_value()
             }
         }
     }
