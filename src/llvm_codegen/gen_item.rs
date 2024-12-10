@@ -89,6 +89,9 @@ impl<'ctx> Codegen<'ctx> for ItemStruct {
             .map(|f| ctx.llvm_type(&f.ty))
             .collect();
 
-        ctx.set_struct_body(&self.name, &field_types);
+        // Set the struct body with the collected field types
+        if let Some(BasicTypeEnum::StructType(struct_type)) = ctx.type_cache.get(&Type::Struct(self.name.clone())) {
+            struct_type.set_body(&field_types, false);
+        }
     }
 } 
