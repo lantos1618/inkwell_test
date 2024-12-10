@@ -1,11 +1,13 @@
+use serde::{Serialize, Deserialize};
+
 /// The root node of our AST, representing a complete program
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Program {
     pub items: Vec<Item>,
 }
 
 /// Top-level items in our program (functions, structs, etc.)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Item {
     Function(ItemFunction),
     Struct(ItemStruct),
@@ -13,7 +15,7 @@ pub enum Item {
 }
 
 /// A function definition
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ItemFunction {
     pub name: String,
     pub params: Vec<FunctionParam>,
@@ -22,34 +24,34 @@ pub struct ItemFunction {
 }
 
 /// A function parameter
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FunctionParam {
     pub name: String,
     pub ty: AstType,
 }
 
 /// A struct definition
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ItemStruct {
     pub name: String,
     pub fields: Vec<StructField>,
 }
 
 /// A struct field
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize   )]
 pub struct StructField {
     pub name: String,
     pub ty: AstType,
 }
 
 /// A block of statements
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Block {
     pub statements: Vec<Stmt>,
 }
 
 /// A statement in our language
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Stmt {
     /// Let binding: let name: type = value;
     Let {
@@ -77,7 +79,7 @@ pub enum Stmt {
 }
 
 /// An expression in our language
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Expr {
     /// Literal value (integer, boolean, etc.)
     Literal(Literal),
@@ -125,7 +127,7 @@ pub enum Expr {
 }
 
 /// A match arm in a match expression
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MatchArm {
     pub pattern: Pattern,
     pub guard: Option<Box<Expr>>,
@@ -133,7 +135,7 @@ pub struct MatchArm {
 }
 
 /// A pattern in a match arm
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Pattern {
     /// Literal pattern (e.g., 42, true)
     Literal(Literal),
@@ -157,7 +159,7 @@ pub enum Pattern {
 }
 
 /// Literal values
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Literal {
     Int(i64),
     Float(f64),
@@ -167,7 +169,7 @@ pub enum Literal {
 }
 
 /// Types in our language
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AstType {
     Int,
     Float,
@@ -185,7 +187,7 @@ pub enum AstType {
 }
 
 /// Binary operators
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BinOp {
     // Arithmetic
     Add,
@@ -212,7 +214,7 @@ pub enum BinOp {
 }
 
 /// Unary operators
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UnaryOp {
     Neg,    // -
     Not,    // !
