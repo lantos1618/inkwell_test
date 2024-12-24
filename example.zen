@@ -1,0 +1,149 @@
+Base:
+    id: UUID
+
+new(Base) -> Base:
+    id = UUID.new()
+    Base(id)
+
+Person:
+    Name: "lantos"
+    Email: "lantos@lantos.dev"
+    Github: "https://github.com/lantos1618"
+
+
+greet(person: Person) -> string:
+    return "Hello, " + person.Name + "!"
+
+// Structs
+RGB:
+    Red: u8
+    Green: u8
+    Blue: u8
+
+// Enums
+Color:
+    | Red: RGB(255, 0, 0)
+    | Green: RGB(0, 255, 0)
+    | Blue: RGB(0, 0, 255)
+    | Custom: RGB
+
+// Generics
+Option<T>:
+    | Some: T
+    | None
+
+
+print_colors(colors: Vec<i32 | RGB>) -> Vec<i32 | RGB>:
+    loop colors:
+        (item, index) =>
+            if item:
+                i32 =>
+                    println("i32 \(index)")
+                RGB =>
+                    println("RGB \(index)")
+
+
+
+// Match on Type as function
+special_print(color: Color.Red):
+    println("Red :)")
+
+special_print(color: Color.Green):
+    println("Green :)")
+
+special_print(color: Color.Blue):
+    println("Blue :)")  
+
+special_print(color: Color.Custom(rgb)):
+    println("Custom \(rgb.Red) \(rgb.Green) \(rgb.Blue)")
+
+
+// go had this pretty good tbh
+find(v: Vec<T>, f: (T) -> bool) -> chan<T>:
+    loop v:
+        (item, index) =>
+            if f(item):
+                chan(item)
+
+// idk how to do spawn
+
+
+Json:
+    | String: string
+    | Number: f64
+    | Boolean: bool
+    | Array: Vec<Json>
+    | Object: Map<string, Json>
+
+
+Json(t: String) -> Json:
+    Json.String(t)
+
+Json(t: u8) -> Json:
+    Json.Number(t)
+
+Json(t: u16) -> Json:
+    Json.Number(t)
+
+Json(t: u32) -> Json:
+    Json.Number(t)
+
+Json(t: i8) -> Json:
+    Json.Number(t)
+
+Json(t: i16) -> Json:
+    Json.Number(t)
+
+Json(t: i32) -> Json:
+    Json.Number(t)
+
+Json(t: f32) -> Json:
+    Json.Number(t)
+
+Json(t: f64) -> Json:
+    Json.Number(t)
+
+Json(t: bool) -> Json:
+    Json.Boolean(t) 
+
+Json(t: Vec<Json>) -> Json:
+    Json.Array(t)
+
+Json(t: Map<string, Json>) -> Json:
+    Json.Object(t)
+
+
+Json(t: Vec<T>) -> Json:
+    Json.Array(t.map(Json))
+
+Json(t: T) -> Json:
+    if t:
+        String => t.Json()
+        int => t.Json()
+        float => t.Json()
+        bool => t.Json()
+        Struct => t.ToMap().Json()
+
+main():
+    person = Person (
+        Name: "lantos",
+        Email: "me@lantos.dev",
+        Github: "https://github.com/lantos"
+    )
+
+    person.greet()
+
+    color = Color.Red
+
+    color.special_print()
+
+    if color:
+        .Red => println("Red")
+        .Green => println("Green")
+        .Blue => println("Blue")
+        .Custom(rgb) => println("Custom \(rgb.Red) \(rgb.Green) \(rgb.Blue)")
+
+    i = 0
+    loop i < colors.len():
+        println("i32 \(i)")
+        i += 1
